@@ -2,7 +2,7 @@ import cloudscraper
 import asyncio
 import logging
 import math
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
@@ -103,14 +103,6 @@ class MagnitAPI:
     def _get_image_url(self, item: dict) -> str:
         gallery = item.get("gallery", [])
         return gallery[0].get("url", "") if gallery else ""
-    
-      
-        results = {}
-        for type_name, store_type in types.items():
-            product = await self.search_product(article, store_code, store_type)
-            results[type_name] = product
-        
-        return results
     
     def calculate_bounding_box(self, lat: float, lon: float, radius_km: float) -> dict:
         lat_delta = radius_km / 111.0
