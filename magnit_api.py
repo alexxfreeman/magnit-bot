@@ -104,16 +104,7 @@ class MagnitAPI:
         gallery = item.get("gallery", [])
         return gallery[0].get("url", "") if gallery else ""
     
-    async def search_product_all_types(
-        self, article: str, store_code: str = "764557"
-    ) -> Dict[str, Optional[Product]]:
-        """Поиск товара во всех типах получения (магазин/доставка/самовывоз)"""
-        types = {
-            "store": "express",
-            "delivery": "delivery",
-            "pickup": "pickup"
-        }
-        
+      
         results = {}
         for type_name, store_type in types.items():
             product = await self.search_product(article, store_code, store_type)
