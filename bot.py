@@ -17,6 +17,21 @@ from database import init_db, add_to_history
 from magnit_api import magnit_api
 import tempfile
 import os
+import re
+
+def extract_article_from_text(text: str) -> str:
+    """
+    Извлекает артикул из текста или ссылки
+    """
+    if text.isdigit():
+        return text
+    
+    # Ищем последовательность цифр (артикул обычно 10+ цифр)
+    match = re.search(r'\d{10,}', text)
+    if match:
+        return match.group()
+    
+    return text
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
