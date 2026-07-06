@@ -1,10 +1,17 @@
 import cloudscraper
 import asyncio
 import logging
+import math
 from typing import List, Dict, Optional
 from dataclasses import dataclass
+from geopy.distance import geodesic
+from geopy.geocoders import Nominatim
 
 logger = logging.getLogger(__name__)
+
+# Инициализация геокодера для получения адресов
+geolocator = Nominatim(user_agent="magnit_bot_v1")
+
 
 @dataclass
 class Product:
@@ -23,14 +30,17 @@ class Product:
     def in_stock(self) -> bool:
         return self.quantity > 0
     
-@property
-def url(self) -> str:
-    return f"https://magnit.ru/product/{self.id}/"
+    @property
+    def url(self) -> str:
+        """Правильная ссылка на товар"""
+        return f"https://magnit.ru/catalog/{self.seo_code}/"
+
 
 class MagnitAPI:
     """Парсер API Магнита"""
     
     SEARCH_URL = "https://magnit.ru/webgate/v2/goods/search"
+    STORES_URL = "https://magnit.ru/webgate/v1/stores-facade/search"
     
     def __init__(self):
         self.scraper = cloudscraper.create_scraper()
@@ -48,17 +58,7 @@ class MagnitAPI:
         store_code: str = "764557",
         store_type: str = "express"
     ) -> Optional[Product]:
-        """
-        Поиск товара по артикулу
-        
-        Args:
-            article: Артикул товара
-            store_code: Код магазина (по умолчанию 764557)
-            store_type: Тип магазина (express, supermarket, etc.)
-        
-        Returns:
-            Product object или None
-        """
+        """Поиск товара по артикулу"""
         payload = {
             "term": article,
             "storeCode": store_code,
@@ -89,7 +89,6 @@ class MagnitAPI:
             
             data = response.json()
             
-            # Проверяем что это поиск по артикулу
             if not data.get("isSearchByArticle"):
                 logger.warning("Поиск не по артикулу")
                 return None
@@ -99,14 +98,12 @@ class MagnitAPI:
                 logger.info(f"Товар {article} не найден")
                 return None
             
-            # Берём первый товар
             item = items[0]
             
-            # Извлекаем данные
             product = Product(
                 id=item.get("id") or item.get("productId"),
                 name=item.get("name", "Без названия"),
-                price=item.get("price", 0) / 100,  # Конвертируем копейки в рубли
+                price=item.get("price", 0) / 100,
                 quantity=item.get("quantity", 0),
                 store_code=item.get("storeCode", store_code),
                 image_url=self._get_image_url(item),
@@ -129,243 +126,96 @@ class MagnitAPI:
             return gallery[0].get("url", "")
         return ""
     
-    async def search_multiple_stores(
-        self, 
-        article: str, 
-        store_codes: List[str],
-        store_type: str = "express"
-    ) -> List[Product]:
-        """
-        Поиск товара в нескольких магазинах
+    def calculate_bounding_box(self, lat: float, lon: float, radius_km: float) -> dict:
+        """Вычисляет границы прямоугольника (box) на основе центра и радиуса"""
+        lat_delta = radius_km / 111.0
+        lon_delta = radius_km / (111.0 * math.cos(math.radians(lat)))
         
-        Args:
-            article: Артикул товара
-            store_codes: Список кодов магазинов
-            store_type: Тип магазина
-        
-        Returns:
-            Список найденных товаров
-        """
-        tasks = [
-            self.search_product(article, store_code, store_type)
-            for store_code in store_codes
-        ]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Фильтруем успешные результаты
-        products = []
-        for result in results:
-            if isinstance(result, Product):
-                products.append(result)
-            elif isinstance(result, Exception):
-                logger.error(f"Ошибка при поиске: {result}")
-        
-        return products
-
-import math
-from geopy.geocoders import Nominatim
-from geopy.distance import geodesic
-
-# Инициализация геокодера для получения адресов
-geolocator = Nominatim(user_agent="magnit_bot_v1")
-
-def calculate_bounding_box(lat: float, lon: float, radius_km: float) -> dict:
-    """
-    Вычисляет границы прямоугольника (box) на основе центра и радиуса
-    """
-    # Примерные коэффициенты (в градусах)
-    lat_delta = radius_km / 111.0  # 1 градус широты ≈ 111 км
-    lon_delta = radius_km / (111.0 * math.cos(math.radians(lat)))
-    
-    return {
-        "leftTopPoint": {
-            "latitude": lat + lat_delta,
-            "longitude": lon - lon_delta
-        },
-        "rightBottomPoint": {
-            "latitude": lat - lat_delta,
-            "longitude": lon + lon_delta
+        return {
+            "leftTopPoint": {
+                "latitude": lat + lat_delta,
+                "longitude": lon - lon_delta
+            },
+            "rightBottomPoint": {
+                "latitude": lat - lat_delta,
+                "longitude": lon + lon_delta
+            }
         }
-    }
+    
+    async def get_stores_nearby(self, lat: float, lon: float, radius_km: float = 10) -> List[dict]:
+        """Получение списка магазинов рядом с координатами через API Магнита"""
+        bbox = self.calculate_bounding_box(lat, lon, radius_km)
+        
+        payload = {
+            "filters": {
+                "geo": {
+                    "typeName": "box",
+                    "leftTopPoint": bbox["leftTopPoint"],
+                    "rightBottomPoint": bbox["rightBottomPoint"]
+                },
+                "storeTypeListV2": ["MM", "GM", "DG", "MO", "ME", "MC", "DARKSTORE", "MM_MINI", "ZARYAD"]
+            }
+        }
+        
+        try:
+            response = self.scraper.post(
+                self.STORES_URL,
+                json=payload,
+                headers=self.headers,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                stores_raw = data.get("items", {}).get("items", [])
+                
+                stores = []
+                for store in stores_raw:
+                    if not store.get("isActive", False):
+                        continue
+                    
+                    store_coords = store.get("coordinates", {})
+                    store_lat = store_coords.get("latitude", 0)
+                    store_lon = store_coords.get("longitude", 0)
+                    
+                    distance = geodesic((lat, lon), (store_lat, store_lon)).km
+                    
+                    store_code = store.get("externalId", {}).get("storeCode", "")
+                    
+                    stores.append({
+                        "code": store_code,
+                        "name": f"Магнит #{store_code}",
+                        "address": "",
+                        "latitude": store_lat,
+                        "longitude": store_lon,
+                        "distance": distance,
+                        "storeType": store.get("storeTypeV2", "MM")
+                    })
+                
+                stores.sort(key=lambda x: x["distance"])
+                
+                logger.info(f"Найдено {len(stores)} магазинов в радиусе {radius_km} км")
+                return stores
+            else:
+                logger.error(f"Ошибка получения магазинов: {response.status_code}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Ошибка поиска магазинов: {e}")
+            return []
+
 
 def get_address_from_coordinates(lat: float, lon: float) -> str:
     """Получает адрес по координатам через OpenStreetMap"""
     try:
         location = geolocator.reverse(f"{lat}, {lon}", language="ru", timeout=5)
         if location and location.address:
-            # Берём только основную часть адреса
             address = location.address.split(",")[0:3]
             return ", ".join(address)
     except Exception as e:
         logger.error(f"Ошибка получения адреса: {e}")
     return f"Координаты: {lat:.4f}, {lon:.4f}"
 
-async def get_stores_nearby(self, lat: float, lon: float, radius_km: float = 10) -> List[dict]:
-    """
-    Получение списка магазинов рядом с координатами через API Магнита
-    """
-    url = "https://magnit.ru/webgate/v1/stores-facade/search"
-    
-    # Вычисляем границы прямоугольника
-    bbox = calculate_bounding_box(lat, lon, radius_km)
-    
-    payload = {
-        "filters": {
-            "geo": {
-                "typeName": "box",
-                "leftTopPoint": bbox["leftTopPoint"],
-                "rightBottomPoint": bbox["rightBottomPoint"]
-            },
-            "storeTypeListV2": ["MM", "GM", "DG", "MO", "ME", "MC", "DARKSTORE", "MM_MINI", "ZARYAD"]
-        }
-    }
-    
-    try:
-        response = self.scraper.post(url, json=payload, headers=self.headers, timeout=15)
-        
-        if response.status_code == 200:
-            data = response.json()
-            stores_raw = data.get("items", {}).get("items", [])
-            
-            stores = []
-            for store in stores_raw:
-                if not store.get("isActive", False):
-                    continue
-                
-                store_coords = store.get("coordinates", {})
-                store_lat = store_coords.get("latitude", 0)
-                store_lon = store_coords.get("longitude", 0)
-                
-                # Вычисляем расстояние от пользователя до магазина
-                distance = geodesic((lat, lon), (store_lat, store_lon)).km
-                
-                store_code = store.get("externalId", {}).get("storeCode", "")
-                
-                stores.append({
-                    "code": store_code,
-                    "name": f"Магнит #{store_code}",  # В API нет названия, используем код
-                    "address": "",  # Получим позже
-                    "latitude": store_lat,
-                    "longitude": store_lon,
-                    "distance": distance,
-                    "storeType": store.get("storeTypeV2", "MM")
-                })
-            
-            # Сортируем по расстоянию
-            stores.sort(key=lambda x: x["distance"])
-            
-            logger.info(f"Найдено {len(stores)} магазинов в радиусе {radius_km} км")
-            return stores
-        else:
-            logger.error(f"Ошибка получения магазинов: {response.status_code}")
-            return []
-            
-    except Exception as e:
-        logger.error(f"Ошибка поиска магазинов: {e}")
-        return []
-
-async def get_store_address(self, store_code: str) -> str:
-    """Получение адреса магазина по коду (если есть отдельный API)"""
-    # Пока возвращаем пустую строку — адреса будем получать через геокодер
-    return ""
-
-# Добавляем методы в класс
-MagnitAPI.get_stores_nearby = get_stores_nearby
-MagnitAPI.get_store_address = get_store_address
 
 # Глобальный экземпляр API
 magnit_api = MagnitAPI()
-
-async def get_stores_nearby(self, lat: float, lon: float, radius_km: int = 10) -> List[dict]:
-    """
-    Получение списка магазинов рядом с координатами
-    
-    Args:
-        lat: Широта
-        lon: Долгота
-        radius_km: Радиус поиска в км
-    
-    Returns:
-        Список магазинов
-    """
-    # API endpoint для поиска магазинов (предположительный)
-    # Если не работает - нужно будет найти реальный через DevTools
-    url = "https://magnit.ru/webgate/v2/stores/search"
-    
-    payload = {
-        "lat": lat,
-        "lon": lon,
-        "radius": radius_km * 1000,  # конвертируем в метры
-        "limit": 100
-    }
-    
-    try:
-        response = self.scraper.post(url, json=payload, headers=self.headers, timeout=15)
-        
-        if response.status_code == 200:
-            data = response.json()
-            stores = data.get("stores", [])
-            logger.info(f"Найдено {len(stores)} магазинов в радиусе {radius_km} км")
-            return stores
-        else:
-            logger.error(f"Ошибка получения магазинов: {response.status_code}")
-            return []
-            
-    except Exception as e:
-        logger.error(f"Ошибка поиска магазинов: {e}")
-        return []
-
-async def check_product_in_multiple_stores(
-    self, 
-    article: str, 
-    stores: List[dict]
-) -> List[dict]:
-    """
-    Проверка наличия товара в нескольких магазинах
-    
-    Args:
-        article: Артикул товара
-        stores: Список магазинов
-    
-    Returns:
-        Список результатов с ценами и наличием
-    """
-    results = []
-    
-    # Проверяем товар в каждом магазине
-    for store in stores:
-        store_code = store.get("code") or store.get("storeCode")
-        if not store_code:
-            continue
-        
-        # Ищем товар в этом магазине
-        product = await self.search_product(article, store_code)
-        
-        if product:
-            results.append({
-                "store_code": store_code,
-                "store_name": store.get("name", "Неизвестно"),
-                "store_address": store.get("address", ""),
-                "distance": store.get("distance", 0),
-                "price": product.price,
-                "quantity": product.quantity,
-                "in_stock": product.in_stock,
-                "url": product.url
-            })
-        
-        # Небольшая задержка чтобы не спамить API
-        await asyncio.sleep(0.2)
-    
-    # Сортируем по цене (только те что в наличии)
-    in_stock = [r for r in results if r["in_stock"]]
-    in_stock.sort(key=lambda x: x["price"])
-    
-    # Добавляем те что не в наличии в конец
-    not_in_stock = [r for r in results if not r["in_stock"]]
-    
-    return in_stock + not_in_stock
-
-# Добавляем методы в класс
-MagnitAPI.get_stores_nearby = get_stores_nearby
-MagnitAPI.check_product_in_multiple_stores = check_product_in_multiple_stores
