@@ -2,29 +2,28 @@ import cloudscraper
 import asyncio
 import logging
 import math
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
 
 logger = logging.getLogger(__name__)
 
-# Инициализация геокодера для получения адресов
 geolocator = Nominatim(user_agent="magnit_bot_v1")
 
 
 @dataclass
 class Product:
-    """Информация о товаре"""
     id: str
     name: str
-    price: float  # в рублях
+    price: float
     quantity: int
     store_code: str
     image_url: str
     rating: float
     is_adult: bool
     seo_code: str
+    store_type: str = "express"
     
     @property
     def in_stock(self) -> bool:
@@ -32,15 +31,11 @@ class Product:
     
     @property
     def url(self) -> str:
-        """Правильная ссылка на товар"""
-        if self.seo_code:
-            return f"https://magnit.ru/catalog/{self.seo_code}/"
-        return f"https://magnit.ru/product/{self.id}/"
+        # Универсальная ссылка на поиск по артикулу — работает для любого города
+        return f"https://magnit.ru/catalog/?q={self.id}"
 
 
 class MagnitAPI:
-    """Парсер API Магнита"""
-    
     SEARCH_URL = "https://magnit.ru/webgate/v2/goods/search"
     STORES_URL = "https://magnit.ru/webgate/v1/stores-facade/search"
     
@@ -60,49 +55,36 @@ class MagnitAPI:
         store_code: str = "764557",
         store_type: str = "express"
     ) -> Optional[Product]:
-        """Поиск товара по артикулу"""
         payload = {
             "term": article,
             "storeCode": store_code,
             "storeType": store_type,
             "catalogType": "3",
             "includeAdultGoods": True,
-            "pagination": {
-                "offset": 0,
-                "limit": 36
-            },
-            "sort": {
-                "order": "desc",
-                "type": "popularity"
-            }
+            "pagination": {"offset": 0, "limit": 36},
+            "sort": {"order": "desc", "type": "popularity"}
         }
         
         try:
             response = self.scraper.post(
-                self.SEARCH_URL,
-                json=payload,
-                headers=self.headers,
-                timeout=15
+                self.SEARCH_URL, json=payload, headers=self.headers, timeout=15
             )
             
             if response.status_code != 200:
-                logger.error(f"Ошибка API: {response.status_code}")
                 return None
             
             data = response.json()
             
             if not data.get("isSearchByArticle"):
-                logger.warning("Поиск не по артикулу")
                 return None
             
             items = data.get("items", [])
             if not items:
-                logger.info(f"Товар {article} не найден")
                 return None
             
             item = items[0]
             
-            product = Product(
+            return Product(
                 id=item.get("id") or item.get("productId"),
                 name=item.get("name", "Без названия"),
                 price=item.get("price", 0) / 100,
@@ -111,25 +93,35 @@ class MagnitAPI:
                 image_url=self._get_image_url(item),
                 rating=item.get("ratings", {}).get("rating", 0),
                 is_adult=item.get("isForAdults", False),
-                seo_code=item.get("seoCode", "")
+                seo_code=item.get("seoCode", ""),
+                store_type=store_type
             )
-            
-            logger.info(f"Найден товар: {product.name} ({product.price}₽, в наличии: {product.quantity})")
-            return product
-            
         except Exception as e:
             logger.error(f"Ошибка поиска товара {article}: {e}")
             return None
     
     def _get_image_url(self, item: dict) -> str:
-        """Извлекает URL картинки товара"""
         gallery = item.get("gallery", [])
-        if gallery and len(gallery) > 0:
-            return gallery[0].get("url", "")
-        return ""
+        return gallery[0].get("url", "") if gallery else ""
+    
+    async def search_product_all_types(
+        self, article: str, store_code: str = "764557"
+    ) -> Dict[str, Optional[Product]]:
+        """Поиск товара во всех типах получения (магазин/доставка/самовывоз)"""
+        types = {
+            "store": "express",
+            "delivery": "delivery",
+            "pickup": "pickup"
+        }
+        
+        results = {}
+        for type_name, store_type in types.items():
+            product = await self.search_product(article, store_code, store_type)
+            results[type_name] = product
+        
+        return results
     
     def calculate_bounding_box(self, lat: float, lon: float, radius_km: float) -> dict:
-        """Вычисляет границы прямоугольника (box) на основе центра и радиуса"""
         lat_delta = radius_km / 111.0
         lon_delta = radius_km / (111.0 * math.cos(math.radians(lat)))
         
@@ -145,7 +137,6 @@ class MagnitAPI:
         }
     
     async def get_stores_nearby(self, lat: float, lon: float, radius_km: float = 10) -> List[dict]:
-        """Получение списка магазинов рядом с координатами через API Магнита"""
         bbox = self.calculate_bounding_box(lat, lon, radius_km)
         
         payload = {
@@ -161,10 +152,7 @@ class MagnitAPI:
         
         try:
             response = self.scraper.post(
-                self.STORES_URL,
-                json=payload,
-                headers=self.headers,
-                timeout=15
+                self.STORES_URL, json=payload, headers=self.headers, timeout=15
             )
             
             if response.status_code == 200:
@@ -183,6 +171,7 @@ class MagnitAPI:
                     distance = geodesic((lat, lon), (store_lat, store_lon)).km
                     
                     store_code = store.get("externalId", {}).get("storeCode", "")
+                    store_type = store.get("storeTypeV2", "MM")
                     
                     stores.append({
                         "code": store_code,
@@ -191,11 +180,10 @@ class MagnitAPI:
                         "latitude": store_lat,
                         "longitude": store_lon,
                         "distance": distance,
-                        "storeType": store.get("storeTypeV2", "MM")
+                        "storeType": store_type
                     })
                 
                 stores.sort(key=lambda x: x["distance"])
-                
                 logger.info(f"Найдено {len(stores)} магазинов в радиусе {radius_km} км")
                 return stores
             else:
@@ -208,7 +196,6 @@ class MagnitAPI:
 
 
 def get_address_from_coordinates(lat: float, lon: float) -> str:
-    """Получает адрес по координатам через OpenStreetMap"""
     try:
         location = geolocator.reverse(f"{lat}, {lon}", language="ru", timeout=5)
         if location and location.address:
@@ -219,5 +206,4 @@ def get_address_from_coordinates(lat: float, lon: float) -> str:
     return f"Координаты: {lat:.4f}, {lon:.4f}"
 
 
-# Глобальный экземпляр API
 magnit_api = MagnitAPI()
