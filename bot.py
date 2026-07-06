@@ -251,19 +251,27 @@ async def wrong_input_during_location(message: Message):
 
 @router.message(F.text)
 async def handle_article(message: Message):
-    """Обработка артикула"""
-    article = message.text.strip()
+    """Обработка артикула или ссылки"""
+    raw_text = message.text.strip()
     
-    # Простая валидация
+    # Извлекаем артикул из текста/ссылки
+    article = extract_article_from_text(raw_text)
+    
+    # Валидация
     if not article.isdigit():
-        await message.answer("❌ Пожалуйста, отправьте артикул, состоящий только из цифр.")
+        await message.answer(
+            "❌ Не удалось найти артикул. Отправьте:\n"
+            "• Только цифры: <code>1199991965</code>\n"
+            "• Или ссылку: <code>https://magnit.ru/product/1199991965</code>",
+            parse_mode="HTML"
+        )
         return
     
-    # Сохраняем артикул для пользователя
+    # Сохраняем артикул
     user_last_article[message.from_user.id] = article
     
     await message.answer("🔍 Ищу товар в базе Магнита...")
-    
+      
     # Ищем товар
     product = await magnit_api.search_product(article)
     
