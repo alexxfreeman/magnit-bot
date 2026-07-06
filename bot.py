@@ -495,14 +495,13 @@ async def cmd_broadcast(message: Message):
     
     await message.answer("📨 Начинаю рассылку...")
     
-    async with aiosqlite.connect(config.DB_PATH) as db:
-        cursor = await db.execute('SELECT user_id FROM users')
-        users = await cursor.fetchall()
+    # Получаем всех пользователей
+    users = await get_all_users()
     
     sent = 0
     failed = 0
     
-    for (user_id,) in users:
+    for user_id in users:
         try:
             await bot.send_message(user_id, broadcast_text)
             sent += 1
@@ -513,7 +512,7 @@ async def cmd_broadcast(message: Message):
     
     await message.answer(
         f"✅ Рассылка завершена!\n"
-        f" Отправлено: {sent}\n"
+        f"📨 Отправлено: {sent}\n"
         f"❌ Ошибок: {failed}"
     )
 
