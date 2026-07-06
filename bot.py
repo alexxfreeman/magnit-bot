@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -39,7 +40,7 @@ async def cmd_start(message: Message):
 
 @router.message(Command("check_all"))
 async def cmd_check_all(message: Message):
-    """Проверка товара во всех магазинах"""
+    """Проверка товара во всех магазинах города"""
     user_id = message.from_user.id
     
     # Проверяем, есть ли последний артикул
@@ -52,11 +53,79 @@ async def cmd_check_all(message: Message):
         return
     
     article = user_last_article[user_id]
-    await message.answer(f" Проверяю артикул <b>{article}</b> во всех магазинах...", parse_mode="HTML")
     
-    # Здесь будет логика проверки во всех магазинах
-    # Пока заглушка
-    await message.answer("⏳ Функция в разработке. Скоро будет доступна!")
+    # Запрашиваем геолокацию
+    await message.answer(
+        "📍 Отправь мне свою геолокацию (кнопка со скрепкой → Геопозиция),\n"
+        "чтобы я нашел магазины рядом с тобой.",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
+            resize_keyboard=True
+        )
+    )
+    
+    # Ждем геолокацию
+    try:
+        location_msg = await bot.wait_for(
+            "message",
+            filter=lambda m: m.from_user.id == user_id and m.location,
+            timeout=60
+        )
+        
+        lat = location_msg.location.latitude
+        lon = location_msg.longitude
+        
+        await message.answer(
+            f"🔍 Ищу магазины рядом с тобой...\n"
+            f" Координаты: {lat:.4f}, {lon:.4f}",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        # Получаем список магазинов
+        stores = await magnit_api.get_stores_nearby(lat, lon, radius_km=15)
+        
+        if not stores:
+            await message.answer("❌ Не удалось найти магазины рядом с тобой.")
+            return
+        
+        await message.answer(f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие товара...")
+        
+        # Проверяем товар во всех магазинах
+        results = await magnit_api.check_product_in_multiple_stores(article, stores)
+        
+        if not results:
+            await message.answer("❌ Товар не найден ни в одном магазине.")
+            return
+        
+        # Формируем ответ с топ-10
+        top_10 = results[:10]
+        
+        text = f"📊 <b>Результаты проверки артикула {article}</b>\n\n"
+        text += f"🏪 Проверено магазинов: {len(results)}\n"
+        text += f"✅ В наличии: {sum(1 for r in results if r['in_stock'])}\n\n"
+        
+        for i, result in enumerate(top_10, 1):
+            if result["in_stock"]:
+                text += f"{i}. 🏪 <b>{result['store_name']}</b>\n"
+                text += f"   💰 Цена: <b>{result['price']:.2f} ₽</b>\n"
+                text += f"   📦 В наличии: {result['quantity']} шт.\n"
+                text += f"    Адрес: {result['store_address']}\n"
+                if result['distance'] > 0:
+                    text += f"   📏 Расстояние: {result['distance']:.1f} км\n"
+                text += f"   🔗 <a href='{result['url']}'>Открыть</a>\n\n"
+            else:
+                text += f"{i}. ❌ {result['store_name']} - нет в наличии\n\n"
+        
+        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+        
+    except asyncio.TimeoutError:
+        await message.answer(
+            " Время вышло. Попробуй еще раз с командой /check_all",
+            reply_markup=ReplyKeyboardRemove()
+        )
+    except Exception as e:
+        logger.error(f"Ошибка в /check_all: {e}")
+        await message.answer(f"❌ Произошла ошибка: {str(e)}")
 
 @router.message(F.text)
 async def handle_article(message: Message):
