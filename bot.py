@@ -230,7 +230,6 @@ async def wrong_input_during_location(message: Message):
         )
     )
 
-
 @router.message(F.text)
 async def handle_article(message: Message):
     raw_text = message.text.strip()
@@ -250,45 +249,27 @@ async def handle_article(message: Message):
     
     await message.answer("🔍 Ищу товар в базе Магнита...")
     
-    # Пробуем получить все 3 типа цен
-    products = await magnit_api.search_product_all_types(article)
-    
-    # Берём первый найденный для основной информации
-    product = products.get("store") or products.get("delivery") or products.get("pickup")
+    product = await magnit_api.search_product(article)
     
     if not product:
         await message.answer(
-            f" Товар с артикулом <code>{article}</code> не найден.\n\n"
+            f"❌ Товар с артикулом <code>{article}</code> не найден.\n\n"
             "Возможно, товар недоступен в вашем регионе или снят с продажи.",
             parse_mode="HTML"
         )
         return
     
-    # Формируем текст с разными ценами
-    text = f"📦 <b>{product.name}</b>\n\n"
+    stock_status = "✅ В наличии" if product.in_stock else "❌ Нет в наличии"
     
-    # Блок с разными типами получения
-    price_block = ""
-    if products["store"] and products["store"].in_stock:
-        price_block += f"🏪 <b>В магазине:</b> {products['store'].price:.2f} ₽ ({products['store'].quantity} шт.)\n"
-    elif products["store"]:
-        price_block += f"🏪 <b>В магазине:</b> нет в наличии\n"
-    
-    if products["delivery"] and products["delivery"].in_stock:
-        price_block += f"🚚 <b>Доставка:</b> {products['delivery'].price:.2f} ₽ ({products['delivery'].quantity} шт.)\n"
-    elif products["delivery"]:
-        price_block += f"🚚 <b>Доставка:</b> нет в наличии\n"
-    
-    if products["pickup"] and products["pickup"].in_stock:
-        price_block += f"📦 <b>Самовывоз:</b> {products['pickup'].price:.2f} ₽ ({products['pickup'].quantity} шт.)\n"
-    elif products["pickup"]:
-        price_block += f"📦 <b>Самовывоз:</b> нет в наличии\n"
-    
-    if price_block:
-        text += price_block + "\n"
-    
-    text += f"⭐ <b>Рейтинг:</b> {product.rating}/5\n"
-    text += f" <a href='{product.url}'>Открыть в Магните</a>"
+    text = (
+        f"📦 <b>{product.name}</b>\n\n"
+        f"💰 <b>Цена:</b> {product.price:.2f} ₽\n"
+        f"📊 <b>Статус:</b> {stock_status}\n"
+        f"📦 <b>Количество:</b> {product.quantity} шт.\n"
+        f"⭐ <b>Рейтинг:</b> {product.rating}/5\n"
+        f"🏪 <b>Магазин:</b> {product.store_code}\n\n"
+        f"🔗 <a href='{product.url}'>Открыть в Магните</a>"
+    )
     
     if product.image_url:
         await message.answer_photo(
@@ -307,15 +288,18 @@ async def handle_article(message: Message):
         in_stock=product.in_stock
     )
     
+    # Две разные кнопки с разной логикой
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")],
-            [InlineKeyboardButton(text="📊 Проверить во всех магазинах", callback_data="check_all")]
+            [InlineKeyboardButton(text=" Проверить во всех магазинах", callback_data="check_all")],
+            [InlineKeyboardButton(text=" Новый поиск", callback_data="new_search")]
         ]
     )
     
-    await message.answer("💡 Что хотите сделать дальше?", reply_markup=keyboard)
-
+    await message.answer(
+        "💡 Что хотите сделать дальше?",
+        reply_markup=keyboard
+    )
 
 @router.callback_query(F.data == "new_search")
 async def callback_new_search(callback_query: CallbackQuery):
@@ -348,15 +332,6 @@ async def callback_check_all(callback_query: CallbackQuery, state: FSMContext):
         reply_markup=kb
     )
     await state.set_state(ScanStates.waiting_for_location)
-    await callback_query.answer()
-
-
-@router.callback_query(F.data == "check_all_other")
-async def callback_check_all_other(callback_query: CallbackQuery):
-    await callback_query.message.answer(
-        "🔍 Отправьте новый артикул, а затем используйте /check_all",
-        reply_markup=ReplyKeyboardRemove()
-    )
     await callback_query.answer()
 
 
