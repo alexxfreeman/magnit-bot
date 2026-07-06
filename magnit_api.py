@@ -163,6 +163,117 @@ class MagnitAPI:
         
         return products
 
+import math
+from geopy.geocoders import Nominatim
+from geopy.distance import geodesic
+
+# Инициализация геокодера для получения адресов
+geolocator = Nominatim(user_agent="magnit_bot_v1")
+
+def calculate_bounding_box(lat: float, lon: float, radius_km: float) -> dict:
+    """
+    Вычисляет границы прямоугольника (box) на основе центра и радиуса
+    """
+    # Примерные коэффициенты (в градусах)
+    lat_delta = radius_km / 111.0  # 1 градус широты ≈ 111 км
+    lon_delta = radius_km / (111.0 * math.cos(math.radians(lat)))
+    
+    return {
+        "leftTopPoint": {
+            "latitude": lat + lat_delta,
+            "longitude": lon - lon_delta
+        },
+        "rightBottomPoint": {
+            "latitude": lat - lat_delta,
+            "longitude": lon + lon_delta
+        }
+    }
+
+def get_address_from_coordinates(lat: float, lon: float) -> str:
+    """Получает адрес по координатам через OpenStreetMap"""
+    try:
+        location = geolocator.reverse(f"{lat}, {lon}", language="ru", timeout=5)
+        if location and location.address:
+            # Берём только основную часть адреса
+            address = location.address.split(",")[0:3]
+            return ", ".join(address)
+    except Exception as e:
+        logger.error(f"Ошибка получения адреса: {e}")
+    return f"Координаты: {lat:.4f}, {lon:.4f}"
+
+async def get_stores_nearby(self, lat: float, lon: float, radius_km: float = 10) -> List[dict]:
+    """
+    Получение списка магазинов рядом с координатами через API Магнита
+    """
+    url = "https://magnit.ru/webgate/v1/stores-facade/search"
+    
+    # Вычисляем границы прямоугольника
+    bbox = calculate_bounding_box(lat, lon, radius_km)
+    
+    payload = {
+        "filters": {
+            "geo": {
+                "typeName": "box",
+                "leftTopPoint": bbox["leftTopPoint"],
+                "rightBottomPoint": bbox["rightBottomPoint"]
+            },
+            "storeTypeListV2": ["MM", "GM", "DG", "MO", "ME", "MC", "DARKSTORE", "MM_MINI", "ZARYAD"]
+        }
+    }
+    
+    try:
+        response = self.scraper.post(url, json=payload, headers=self.headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            stores_raw = data.get("items", {}).get("items", [])
+            
+            stores = []
+            for store in stores_raw:
+                if not store.get("isActive", False):
+                    continue
+                
+                store_coords = store.get("coordinates", {})
+                store_lat = store_coords.get("latitude", 0)
+                store_lon = store_coords.get("longitude", 0)
+                
+                # Вычисляем расстояние от пользователя до магазина
+                distance = geodesic((lat, lon), (store_lat, store_lon)).km
+                
+                store_code = store.get("externalId", {}).get("storeCode", "")
+                
+                stores.append({
+                    "code": store_code,
+                    "name": f"Магнит #{store_code}",  # В API нет названия, используем код
+                    "address": "",  # Получим позже
+                    "latitude": store_lat,
+                    "longitude": store_lon,
+                    "distance": distance,
+                    "storeType": store.get("storeTypeV2", "MM")
+                })
+            
+            # Сортируем по расстоянию
+            stores.sort(key=lambda x: x["distance"])
+            
+            logger.info(f"Найдено {len(stores)} магазинов в радиусе {radius_km} км")
+            return stores
+        else:
+            logger.error(f"Ошибка получения магазинов: {response.status_code}")
+            return []
+            
+    except Exception as e:
+        logger.error(f"Ошибка поиска магазинов: {e}")
+        return []
+
+async def get_store_address(self, store_code: str) -> str:
+    """Получение адреса магазина по коду (если есть отдельный API)"""
+    # Пока возвращаем пустую строку — адреса будем получать через геокодер
+    return ""
+
+# Добавляем методы в класс
+MagnitAPI.get_stores_nearby = get_stores_nearby
+MagnitAPI.get_store_address = get_store_address
+
 # Глобальный экземпляр API
 magnit_api = MagnitAPI()
 
