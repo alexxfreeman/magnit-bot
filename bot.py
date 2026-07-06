@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from magnit_api import get_address_from_coordinates
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
