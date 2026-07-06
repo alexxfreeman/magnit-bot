@@ -19,7 +19,7 @@ from aiogram.types import (
 )
 
 from config import config
-from database import init_db, add_to_history, get_user_stats, get_recent_logs, get_user_details
+from database import init_db, add_to_history, get_user_stats, get_recent_logs, get_user_details, get_all_users
 from magnit_api import magnit_api, get_address_from_coordinates
 
 # Настройка логирования
