@@ -33,7 +33,9 @@ class Product:
     @property
     def url(self) -> str:
         """Правильная ссылка на товар"""
-        return f"https://magnit.ru/catalog/{self.seo_code}/"
+        if self.seo_code:
+            return f"https://magnit.ru/catalog/{self.seo_code}/"
+        return f"https://magnit.ru/product/{self.id}/"
 
 
 class MagnitAPI:
