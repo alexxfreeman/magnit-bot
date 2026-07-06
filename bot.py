@@ -1,7 +1,9 @@
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, FSInputFile
 from config import config
 from database import init_db, add_to_history
@@ -13,27 +15,50 @@ import os
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
+router = Router()
 
-# Список кодов магазинов для проверки
-# Можно добавить свои коды магазинов
-STORE_CODES = [
-    "764557",  # Пример магазина
-    # Добавьте другие коды магазинов здесь
-]
+# Состояния для FSM
+class ScanStates(StatesGroup):
+    waiting_for_article = State()
 
-@dp.message(CommandStart())
+# Хранилище последних артикулов пользователей
+user_last_article = {}
+
+@router.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
-        "👋 <b>Привет! Я бот для проверки товаров в Магните.</b>\n\n"
+        " <b>Привет! Я бот для проверки товаров в Магните.</b>\n\n"
         "Просто отправь мне <b>артикул товара</b> (цифрами), и я проверю:\n"
         "• Наличие в магазинах\n"
         "• Цену\n"
         "• Рейтинг\n\n"
-        "Пример: <code>1199991965</code>",
+        "Пример: <code>1199991965</code>\n\n"
+        "Используй <b>/check_all</b> для проверки во всех магазинах.",
         parse_mode="HTML"
     )
 
-@dp.message(F.text)
+@router.message(Command("check_all"))
+async def cmd_check_all(message: Message):
+    """Проверка товара во всех магазинах"""
+    user_id = message.from_user.id
+    
+    # Проверяем, есть ли последний артикул
+    if user_id not in user_last_article:
+        await message.answer(
+            "❌ Сначала отправь мне артикул товара для проверки.\n\n"
+            "Пример: <code>1199991965</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    article = user_last_article[user_id]
+    await message.answer(f" Проверяю артикул <b>{article}</b> во всех магазинах...", parse_mode="HTML")
+    
+    # Здесь будет логика проверки во всех магазинах
+    # Пока заглушка
+    await message.answer("⏳ Функция в разработке. Скоро будет доступна!")
+
+@router.message(F.text)
 async def handle_article(message: Message):
     """Обработка артикула"""
     article = message.text.strip()
@@ -43,9 +68,12 @@ async def handle_article(message: Message):
         await message.answer("❌ Пожалуйста, отправьте артикул, состоящий только из цифр.")
         return
     
+    # Сохраняем артикул для пользователя
+    user_last_article[message.from_user.id] = article
+    
     await message.answer("🔍 Ищу товар в базе Магнита...")
     
-    # Ищем товар в первом магазине (быстрый ответ)
+    # Ищем товар
     product = await magnit_api.search_product(article)
     
     if not product:
@@ -89,17 +117,13 @@ async def handle_article(message: Message):
     
     # Предложение проверить в других магазинах
     await message.answer(
-        "💡 Хотите проверить наличие в других магазинах?\n"
-        "Используйте команду /check_all для проверки во всех магазинах."
+        " Используй команду <b>/check_all</b> для проверки во всех магазинах.",
+        parse_mode="HTML"
     )
-
-@dp.message(F.text == "/check_all")
-async def check_all_stores(message: Message):
-    """Проверка во всех магазинах"""
-    await message.answer("⏳ Эта функция в разработке...")
 
 async def main():
     await init_db()
+    dp.include_router(router)
     logging.info("Бот запущен!")
     await dp.start_polling(bot)
 
