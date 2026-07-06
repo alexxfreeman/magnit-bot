@@ -165,3 +165,96 @@ class MagnitAPI:
 
 # Глобальный экземпляр API
 magnit_api = MagnitAPI()
+
+async def get_stores_nearby(self, lat: float, lon: float, radius_km: int = 10) -> List[dict]:
+    """
+    Получение списка магазинов рядом с координатами
+    
+    Args:
+        lat: Широта
+        lon: Долгота
+        radius_km: Радиус поиска в км
+    
+    Returns:
+        Список магазинов
+    """
+    # API endpoint для поиска магазинов (предположительный)
+    # Если не работает - нужно будет найти реальный через DevTools
+    url = "https://magnit.ru/webgate/v2/stores/search"
+    
+    payload = {
+        "lat": lat,
+        "lon": lon,
+        "radius": radius_km * 1000,  # конвертируем в метры
+        "limit": 100
+    }
+    
+    try:
+        response = self.scraper.post(url, json=payload, headers=self.headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            stores = data.get("stores", [])
+            logger.info(f"Найдено {len(stores)} магазинов в радиусе {radius_km} км")
+            return stores
+        else:
+            logger.error(f"Ошибка получения магазинов: {response.status_code}")
+            return []
+            
+    except Exception as e:
+        logger.error(f"Ошибка поиска магазинов: {e}")
+        return []
+
+async def check_product_in_multiple_stores(
+    self, 
+    article: str, 
+    stores: List[dict]
+) -> List[dict]:
+    """
+    Проверка наличия товара в нескольких магазинах
+    
+    Args:
+        article: Артикул товара
+        stores: Список магазинов
+    
+    Returns:
+        Список результатов с ценами и наличием
+    """
+    results = []
+    
+    # Проверяем товар в каждом магазине
+    for store in stores:
+        store_code = store.get("code") or store.get("storeCode")
+        if not store_code:
+            continue
+        
+        # Ищем товар в этом магазине
+        product = await self.search_product(article, store_code)
+        
+        if product:
+            results.append({
+                "store_code": store_code,
+                "store_name": store.get("name", "Неизвестно"),
+                "store_address": store.get("address", ""),
+                "distance": store.get("distance", 0),
+                "price": product.price,
+                "quantity": product.quantity,
+                "in_stock": product.in_stock,
+                "url": product.url
+            })
+        
+        # Небольшая задержка чтобы не спамить API
+        await asyncio.sleep(0.2)
+    
+    # Сортируем по цене (только те что в наличии)
+    in_stock = [r for r in results if r["in_stock"]]
+    in_stock.sort(key=lambda x: x["price"])
+    
+    # Добавляем те что не в наличии в конец
+    not_in_stock = [r for r in results if not r["in_stock"]]
+    
+    return in_stock + not_in_stock
+
+# Добавляем методы в класс
+MagnitAPI.get_stores_nearby = get_stores_nearby
+MagnitAPI.check_product_in_multiple_stores = check_product_in_multiple_stores
