@@ -1,34 +1,59 @@
 import asyncio
 import logging
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, FSInputFile
+from aiogram.types import (
+    Message, 
+    FSInputFile, 
+    ReplyKeyboardMarkup, 
+    KeyboardButton, 
+    ReplyKeyboardRemove
+)
 from config import config
 from database import init_db, add_to_history
 from magnit_api import magnit_api
-from report_generator import generate_html_report
 import tempfile
 import os
 
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
-# Состояния для FSM
+# --- Состояния для FSM ---
 class ScanStates(StatesGroup):
-    waiting_for_article = State()
+    waiting_for_location = State()  # Ожидаем геолокацию
 
 # Хранилище последних артикулов пользователей
 user_last_article = {}
 
+# --- Список магазинов по умолчанию (если API магазинов не работает) ---
+# Замените на реальные коды магазинов вашего города
+DEFAULT_STORES = [
+    {"code": "764557", "name": "Магнит", "address": "ул. Комсомольская, д 5"},
+    {"code": "764558", "name": "Магнит", "address": "ул. Ленина, д 10"},
+    {"code": "764559", "name": "Магнит", "address": "пр. Октября, д 15"},
+    {"code": "764560", "name": "Магнит", "address": "ул. Мира, д 22"},
+    {"code": "764561", "name": "Магнит", "address": "ул. Советская, д 8"},
+    {"code": "764562", "name": "Магнит", "address": "ул. Кирова, д 3"},
+    {"code": "764563", "name": "Магнит", "address": "пр. Авиаторов, д 12"},
+    {"code": "764564", "name": "Магнит", "address": "ул. Волкова, д 7"},
+    {"code": "764565", "name": "Магнит", "address": "ул. Чкалова, д 18"},
+    {"code": "764566", "name": "Магнит", "address": "ул. Республиканская, д 2"},
+    {"code": "764567", "name": "Магнит", "address": "ул. Свободы, д 14"},
+    {"code": "764568", "name": "Магнит", "address": "пр. Толбухина, д 9"},
+]
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
-        " <b>Привет! Я бот для проверки товаров в Магните.</b>\n\n"
+        "👋 <b>Привет! Я бот для проверки товаров в Магните.</b>\n\n"
         "Просто отправь мне <b>артикул товара</b> (цифрами), и я проверю:\n"
         "• Наличие в магазинах\n"
         "• Цену\n"
@@ -38,8 +63,9 @@ async def cmd_start(message: Message):
         parse_mode="HTML"
     )
 
+
 @router.message(Command("check_all"))
-async def cmd_check_all(message: Message):
+async def cmd_check_all(message: Message, state: FSMContext):
     """Проверка товара во всех магазинах города"""
     user_id = message.from_user.id
     
@@ -54,78 +80,149 @@ async def cmd_check_all(message: Message):
     
     article = user_last_article[user_id]
     
-    # Запрашиваем геолокацию
+    # Сохраняем артикул в состояние
+    await state.update_data(article=article)
+    
+    # Просим геолокацию
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
+        resize_keyboard=True
+    )
+    
     await message.answer(
-        "📍 Отправь мне свою геолокацию (кнопка со скрепкой → Геопозиция),\n"
-        "чтобы я нашел магазины рядом с тобой.",
+        "📍 Отправь мне свою геолокацию (нажми на кнопку ниже),\n"
+        "чтобы я нашел магазины рядом с тобой.\n\n"
+        "Или отправь /cancel чтобы отменить.",
+        reply_markup=kb
+    )
+    
+    # Переходим в состояние ожидания геолокации
+    await state.set_state(ScanStates.waiting_for_location)
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    """Отмена текущего действия"""
+    await state.clear()
+    await message.answer(
+        "❌ Действие отменено.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+
+@router.message(ScanStates.waiting_for_location, F.location)
+async def process_location(message: Message, state: FSMContext):
+    """Обработка полученной геолокации"""
+    lat = message.location.latitude
+    lon = message.location.longitude
+    
+    # Получаем артикул из состояния
+    data = await state.get_data()
+    article = data.get("article")
+    
+    # Убираем клавиатуру
+    await message.answer(
+        f"🔍 Ищу магазины рядом с тобой...\n"
+        f"📍 Координаты: {lat:.4f}, {lon:.4f}\n"
+        f" Артикул: {article}",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
+    # Очищаем состояние
+    await state.clear()
+    
+    # Пытаемся получить магазины через API
+    stores = await magnit_api.get_stores_nearby(lat, lon, radius_km=15)
+    
+    # Если API не вернул магазины - используем список по умолчанию
+    if not stores:
+        logger.warning("API магазинов не ответил, используем список по умолчанию")
+        stores = DEFAULT_STORES
+    
+    await message.answer(f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие товара...")
+    
+    # Проверяем товар во всех магазинах
+    results = []
+    for store in stores:
+        store_code = store.get("code") or store.get("storeCode")
+        if not store_code:
+            continue
+        
+        try:
+            product = await magnit_api.search_product(article, store_code)
+            
+            if product:
+                results.append({
+                    "store_code": store_code,
+                    "store_name": store.get("name", "Магнит"),
+                    "store_address": store.get("address", ""),
+                    "distance": store.get("distance", 0),
+                    "price": product.price,
+                    "quantity": product.quantity,
+                    "in_stock": product.in_stock,
+                    "url": product.url
+                })
+        except Exception as e:
+            logger.error(f"Ошибка проверки магазина {store_code}: {e}")
+            continue
+        
+        # Небольшая задержка чтобы не спамить API
+        await asyncio.sleep(0.3)
+    
+    if not results:
+        await message.answer("❌ Товар не найден ни в одном магазине.")
+        return
+    
+    # Сортируем: сначала в наличии по цене, потом без наличия
+    in_stock = sorted([r for r in results if r["in_stock"]], key=lambda x: x["price"])
+    not_in_stock = [r for r in results if not r["in_stock"]]
+    sorted_results = in_stock + not_in_stock
+    
+    # Берем топ-10
+    top_10 = sorted_results[:10]
+    
+    # Формируем ответ
+    text = f"📊 <b>Результаты проверки артикула {article}</b>\n\n"
+    text += f"🏪 Проверено магазинов: {len(results)}\n"
+    text += f"✅ В наличии: {len(in_stock)}\n\n"
+    
+    for i, result in enumerate(top_10, 1):
+        if result["in_stock"]:
+            text += f"{i}. 🏪 <b>{result['store_name']}</b>\n"
+            text += f"   💰 Цена: <b>{result['price']:.2f} ₽</b>\n"
+            text += f"   📦 В наличии: {result['quantity']} шт.\n"
+            text += f"   📍 Адрес: {result['store_address']}\n"
+            if result['distance'] > 0:
+                text += f"   📏 Расстояние: {result['distance']:.1f} км\n"
+            text += f"   🔗 <a href='{result['url']}'>Открыть</a>\n\n"
+        else:
+            text += f"{i}. ❌ <b>{result['store_name']}</b> - нет в наличии\n"
+            text += f"    {result['store_address']}\n\n"
+    
+    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@router.message(ScanStates.waiting_for_location, F.text == "/cancel")
+async def cancel_location(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "❌ Отменено.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+
+@router.message(ScanStates.waiting_for_location, F.text)
+async def wrong_input_during_location(message: Message):
+    """Если пользователь отправил текст вместо геолокации"""
+    await message.answer(
+        "⚠️ Пожалуйста, отправь геолокацию через кнопку ниже.\n"
+        "Или /cancel чтобы отменить.",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
             resize_keyboard=True
         )
     )
-    
-    # Ждем геолокацию
-    try:
-        location_msg = await bot.wait_for(
-            "message",
-            filter=lambda m: m.from_user.id == user_id and m.location,
-            timeout=60
-        )
-        
-        lat = location_msg.location.latitude
-        lon = location_msg.longitude
-        
-        await message.answer(
-            f"🔍 Ищу магазины рядом с тобой...\n"
-            f" Координаты: {lat:.4f}, {lon:.4f}",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        
-        # Получаем список магазинов
-        stores = await magnit_api.get_stores_nearby(lat, lon, radius_km=15)
-        
-        if not stores:
-            await message.answer("❌ Не удалось найти магазины рядом с тобой.")
-            return
-        
-        await message.answer(f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие товара...")
-        
-        # Проверяем товар во всех магазинах
-        results = await magnit_api.check_product_in_multiple_stores(article, stores)
-        
-        if not results:
-            await message.answer("❌ Товар не найден ни в одном магазине.")
-            return
-        
-        # Формируем ответ с топ-10
-        top_10 = results[:10]
-        
-        text = f"📊 <b>Результаты проверки артикула {article}</b>\n\n"
-        text += f"🏪 Проверено магазинов: {len(results)}\n"
-        text += f"✅ В наличии: {sum(1 for r in results if r['in_stock'])}\n\n"
-        
-        for i, result in enumerate(top_10, 1):
-            if result["in_stock"]:
-                text += f"{i}. 🏪 <b>{result['store_name']}</b>\n"
-                text += f"   💰 Цена: <b>{result['price']:.2f} ₽</b>\n"
-                text += f"   📦 В наличии: {result['quantity']} шт.\n"
-                text += f"    Адрес: {result['store_address']}\n"
-                if result['distance'] > 0:
-                    text += f"   📏 Расстояние: {result['distance']:.1f} км\n"
-                text += f"   🔗 <a href='{result['url']}'>Открыть</a>\n\n"
-            else:
-                text += f"{i}. ❌ {result['store_name']} - нет в наличии\n\n"
-        
-        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
-        
-    except asyncio.TimeoutError:
-        await message.answer(
-            " Время вышло. Попробуй еще раз с командой /check_all",
-            reply_markup=ReplyKeyboardRemove()
-        )
-    except Exception as e:
-        logger.error(f"Ошибка в /check_all: {e}")
-        await message.answer(f"❌ Произошла ошибка: {str(e)}")
+
 
 @router.message(F.text)
 async def handle_article(message: Message):
@@ -158,7 +255,7 @@ async def handle_article(message: Message):
     text = (
         f"📦 <b>{product.name}</b>\n\n"
         f"💰 <b>Цена:</b> {product.price:.2f} ₽\n"
-        f"📊 <b>Статус:</b> {stock_status}\n"
+        f" <b>Статус:</b> {stock_status}\n"
         f"📦 <b>Количество:</b> {product.quantity} шт.\n"
         f"⭐ <b>Рейтинг:</b> {product.rating}/5\n"
         f"🏪 <b>Магазин:</b> {product.store_code}\n\n"
@@ -186,9 +283,10 @@ async def handle_article(message: Message):
     
     # Предложение проверить в других магазинах
     await message.answer(
-        " Используй команду <b>/check_all</b> для проверки во всех магазинах.",
+        "💡 Используй команду <b>/check_all</b> для проверки во всех магазинах.",
         parse_mode="HTML"
     )
+
 
 async def main():
     await init_db()
