@@ -23,9 +23,9 @@ class Product:
     def in_stock(self) -> bool:
         return self.quantity > 0
     
-    @property
-    def url(self) -> str:
-        return f"https://magnit.ru/catalog/{self.seo_code}/"
+@property
+def url(self) -> str:
+    return f"https://magnit.ru/product/{self.id}/"
 
 class MagnitAPI:
     """Парсер API Магнита"""
