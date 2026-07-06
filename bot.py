@@ -31,7 +31,7 @@ dp = Dispatcher()
 router = Router()
 
 # Ваш Telegram ID (узнать у @userinfobot)
-ADMIN_ID = 123456789  # ← ЗАМЕНИТЕ НА СВОЙ ID
+ADMIN_ID = 51600446  # ← ЗАМЕНИТЕ НА СВОЙ ID
 
 
 # --- Состояния для FSM ---
