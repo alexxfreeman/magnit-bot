@@ -124,39 +124,44 @@ async def process_location(message: Message, state: FSMContext):
     await message.answer(
         f"🔍 Ищу магазины рядом с тобой...\n"
         f"📍 Координаты: {lat:.4f}, {lon:.4f}\n"
-        f" Артикул: {article}",
+        f"📦 Артикул: {article}",
         reply_markup=ReplyKeyboardRemove()
     )
     
     # Очищаем состояние
     await state.clear()
     
-    # Пытаемся получить магазины через API
-    stores = await magnit_api.get_stores_nearby(lat, lon, radius_km=15)
+    # Получаем магазины через API (радиус 10 км)
+    stores = await magnit_api.get_stores_nearby(lat, lon, radius_km=10)
     
-    # Если API не вернул магазины - используем список по умолчанию
     if not stores:
-        logger.warning("API магазинов не ответил, используем список по умолчанию")
-        stores = DEFAULT_STORES
+        await message.answer("❌ Не удалось найти магазины рядом с тобой.")
+        return
     
     await message.answer(f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие товара...")
     
-    # Проверяем товар во всех магазинах
+    # Проверяем товар в каждом магазине (максимум 30 магазинов)
     results = []
-    for store in stores:
-        store_code = store.get("code") or store.get("storeCode")
-        if not store_code:
-            continue
+    stores_to_check = stores[:30]  # Ограничиваем чтобы не спамить API
+    
+    for i, store in enumerate(stores_to_check, 1):
+        store_code = store["code"]
         
         try:
             product = await magnit_api.search_product(article, store_code)
             
             if product:
+                # Получаем адрес через геокодер
+                address = get_address_from_coordinates(
+                    store["latitude"], 
+                    store["longitude"]
+                )
+                
                 results.append({
                     "store_code": store_code,
-                    "store_name": store.get("name", "Магнит"),
-                    "store_address": store.get("address", ""),
-                    "distance": store.get("distance", 0),
+                    "store_name": f"Магнит #{store_code}",
+                    "store_address": address,
+                    "distance": store["distance"],
                     "price": product.price,
                     "quantity": product.quantity,
                     "in_stock": product.in_stock,
@@ -166,7 +171,11 @@ async def process_location(message: Message, state: FSMContext):
             logger.error(f"Ошибка проверки магазина {store_code}: {e}")
             continue
         
-        # Небольшая задержка чтобы не спамить API
+        # Обновляем прогресс каждые 5 магазинов
+        if i % 5 == 0:
+            await message.answer(f"⏳ Проверено {i}/{len(stores_to_check)} магазинов...")
+        
+        # Задержка чтобы не спамить API
         await asyncio.sleep(0.3)
     
     if not results:
@@ -191,13 +200,13 @@ async def process_location(message: Message, state: FSMContext):
             text += f"{i}. 🏪 <b>{result['store_name']}</b>\n"
             text += f"   💰 Цена: <b>{result['price']:.2f} ₽</b>\n"
             text += f"   📦 В наличии: {result['quantity']} шт.\n"
-            text += f"   📍 Адрес: {result['store_address']}\n"
-            if result['distance'] > 0:
-                text += f"   📏 Расстояние: {result['distance']:.1f} км\n"
+            text += f"   📍 {result['store_address']}\n"
+            text += f"   📏 Расстояние: {result['distance']:.1f} км\n"
             text += f"   🔗 <a href='{result['url']}'>Открыть</a>\n\n"
         else:
             text += f"{i}. ❌ <b>{result['store_name']}</b> - нет в наличии\n"
-            text += f"    {result['store_address']}\n\n"
+            text += f"    📍 {result['store_address']}\n"
+            text += f"    📏 {result['distance']:.1f} км\n\n"
     
     await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
