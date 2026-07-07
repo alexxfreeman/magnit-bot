@@ -147,11 +147,11 @@ async def process_location(message: Message, state: FSMContext):
         store_code = store["code"]
         try:
             product = await magnit_api.search_product(
-                article,
-                shop_code=store_code,
-                store_type=1,
-                catalog_type=1
-            )
+    article,
+    shop_code=store_code,
+    store_type="MM",  # Строка вместо числа
+    catalog_type=1
+)
             checked_count += 1
             if product:
                 address = ""
