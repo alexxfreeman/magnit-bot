@@ -255,9 +255,9 @@ async def handle_article(message: Message):
 
 product = await magnit_api.search_product(
     article,
-    shop_code=shop_code,
+    shop_code=store_code,
     store_type="MM",
-    catalog_type=catalog_type_str  # Строка, не число!
+    catalog_type="1"  # Строка!
 )
     product = await magnit_api.search_product(
     article,
