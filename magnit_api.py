@@ -20,6 +20,15 @@ FALLBACK_STORES = [
     "937695", "388641", "760151", "453594", "764525",
 ]
 
+# Рабочие комбинации storeType + catalogType (перебираем по порядку)
+VALID_SERVICE_PAIRS = [
+    ("express", "3"),      # Работало изначально
+    ("express", "1"),      # Из вашей ссылки
+    ("supermarket", "1"),
+    ("delivery", "2"),
+    ("pickup", "3"),
+]
+
 
 @dataclass
 class Product:
@@ -66,18 +75,30 @@ class MagnitAPI:
         self,
         article: str,
         shop_code: str = None,
-        store_type: str = "MM",
-        catalog_type: str = "1"
+        store_type: str = None,
+        catalog_type: str = None
     ) -> Optional[Product]:
         if shop_code:
-            return await self._try_search(article, shop_code, store_type, catalog_type)
+            # Если указаны конкретные store_type и catalog_type — пробуем их первыми
+            if store_type and catalog_type:
+                product = await self._try_search(article, shop_code, store_type, catalog_type)
+                if product:
+                    return product
+            # Потом перебираем все рабочие комбинации
+            for st, ct in VALID_SERVICE_PAIRS:
+                product = await self._try_search(article, shop_code, st, ct)
+                if product:
+                    return product
+            return None
 
+        # Перебор fallback-магазинов
         codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
         for code in codes_to_try:
-            product = await self._try_search(article, code, store_type, catalog_type)
+            # Пробуем первую рабочую комбинацию
+            product = await self._try_search(article, code, "express", "3")
             if product:
                 return product
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.1)
 
         return None
 
@@ -104,11 +125,9 @@ class MagnitAPI:
             )
 
             if response.status_code != 200:
-                logger.error(f"⛔ HTTP {response.status_code} от {store_code}. Ответ: {response.text[:150]}")
                 return None
 
             data = response.json()
-
             if not data.get("isSearchByArticle"):
                 return None
 
@@ -117,7 +136,7 @@ class MagnitAPI:
                 return None
 
             item = items[0]
-            logger.info(f"✅ Товар найден в {store_code} (storeType={store_type}, catalogType={catalog_type}): {item.get('name', '')}")
+            logger.info(f"✅ Найден в {store_code} (storeType={store_type}, catalogType={catalog_type}): {item.get('name', '')}")
 
             return Product(
                 id=item.get("id") or item.get("productId"),
@@ -133,7 +152,7 @@ class MagnitAPI:
                 catalog_type_name="🏪 В магазине"
             )
         except Exception as e:
-            logger.error(f" Исключение при запросе {store_code}: {e}")
+            logger.error(f"Ошибка {store_code}: {e}")
             return None
 
     def _get_image_url(self, item: dict) -> str:
@@ -166,7 +185,6 @@ class MagnitAPI:
                 self.STORES_URL, json=payload, headers=self.headers, timeout=15
             )
             if response.status_code != 200:
-                logger.error(f"⛔ Ошибка магазинов HTTP {response.status_code}: {response.text[:100]}")
                 return []
 
             data = response.json()
