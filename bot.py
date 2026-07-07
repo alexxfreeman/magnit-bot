@@ -30,7 +30,7 @@ dp = Dispatcher()
 router = Router()
 
 # ВАШ Telegram ID (узнать у @userinfobot)
-ADMIN_ID = 123456789  # ← ЗАМЕНИТЕ НА СВОЙ ID
+ADMIN_ID = 516400446  # ← ЗАМЕНИТЕ НА СВОЙ ID
 
 
 class ScanStates(StatesGroup):
