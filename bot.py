@@ -147,6 +147,7 @@ async def process_location(message: Message, state: FSMContext):
     async def check_store(store):
         store_code = store["code"]
         try:
+            # Используем ТОЛЬКО API для проверки в конкретном магазине
             product = await magnit_api.search_product_in_store(article, store_code)
             if product:
                 address = ""
@@ -260,8 +261,6 @@ async def handle_article(message: Message):
     product = await magnit_api.search_product(
         article,
         shop_code=shop_code,
-        store_type=catalog_type,
-        catalog_type=catalog_type
     )
 
     if not product:
