@@ -29,7 +29,7 @@ bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
-ADMIN_ID = 516400446
+ADMIN_ID = 123456789
 
 
 class ScanStates(StatesGroup):
@@ -127,7 +127,7 @@ async def process_location(message: Message, state: FSMContext):
 
     await message.answer(
         f"🔍 Ищу магазины рядом...\n"
-        f" Координаты: {lat:.4f}, {lon:.4f}\n"
+        f"📍 Координаты: {lat:.4f}, {lon:.4f}\n"
         f"📦 Артикул: {article}",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -138,7 +138,9 @@ async def process_location(message: Message, state: FSMContext):
         return
 
     stores_to_check = stores[:50]
-    await message.answer(f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие в {len(stores_to_check)} магазинах...")
+    await message.answer(
+        f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие в {len(stores_to_check)} магазинах..."
+    )
 
     results = []
     checked_count = 0
@@ -147,16 +149,18 @@ async def process_location(message: Message, state: FSMContext):
         store_code = store["code"]
         try:
             product = await magnit_api.search_product(
-    article,
-    shop_code=store_code,
-    store_type="MM",  # Строка вместо числа
-    catalog_type=1
-)
+                article,
+                shop_code=store_code,
+                store_type="MM",
+                catalog_type="1"
+            )
             checked_count += 1
             if product:
                 address = ""
                 if product.in_stock:
-                    address = get_address_from_coordinates(store["latitude"], store["longitude"])
+                    address = get_address_from_coordinates(
+                        store["latitude"], store["longitude"]
+                    )
                 results.append({
                     "store_code": store_code,
                     "store_name": f"Магнит #{store_code}",
@@ -194,10 +198,10 @@ async def process_location(message: Message, state: FSMContext):
 
     for i, result in enumerate(top_10, 1):
         if result["in_stock"]:
-            text += f"{i}. 🏪 <b>{result['store_name']}</b>\n"
+            text += f"{i}.  <b>{result['store_name']}</b>\n"
             text += f"   💰 Цена: <b>{result['price']:.2f} ₽</b>\n"
             text += f"   📦 В наличии: {result['quantity']} шт.\n"
-            text += f"   📍 {result['store_address']}\n"
+            text += f"    {result['store_address']}\n"
             text += f"   📏 Расстояние: {result['distance']:.1f} км\n"
             text += f"   🔗 <a href='{result['url']}'>Открыть в Магните</a>\n\n"
         else:
@@ -208,11 +212,11 @@ async def process_location(message: Message, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=" Новый поиск", callback_data="new_search")],
+            [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")],
             [InlineKeyboardButton(text="📊 Проверить другой товар", callback_data="check_all_other")]
         ]
     )
-    await message.answer(" Что хотите сделать дальше?", reply_markup=keyboard)
+    await message.answer("💡 Что хотите сделать дальше?", reply_markup=keyboard)
 
 
 @router.message(ScanStates.waiting_for_location, F.text)
@@ -220,7 +224,7 @@ async def wrong_input_during_location(message: Message):
     if message.text == "/cancel":
         return
     await message.answer(
-        "️ Пожалуйста, отправь геолокацию через кнопку ниже.\nИли /cancel чтобы отменить.",
+        "⚠️ Пожалуйста, отправь геолокацию через кнопку ниже.\nИли /cancel чтобы отменить.",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
             resize_keyboard=True
@@ -250,21 +254,15 @@ async def handle_article(message: Message):
     info_text += "..."
     await message.answer(info_text)
 
-    shop_code_int = int(shop_code) if shop_code and shop_code.isdigit() else None
+    # catalog_type — СТРОКА, не число!
     catalog_type_str = catalog_type if catalog_type else "1"
 
-product = await magnit_api.search_product(
-    article,
-    shop_code=store_code,
-    store_type="MM",
-    catalog_type="1"  # Строка!
-)
     product = await magnit_api.search_product(
-    article,
-    shop_code=shop_code,
-    store_type="MM",  # Строка вместо числа
-    catalog_type=catalog_type_int
-)
+        article,
+        shop_code=shop_code,
+        store_type="MM",
+        catalog_type=catalog_type_str
+    )
 
     if not product:
         await message.answer(
@@ -276,7 +274,7 @@ product = await magnit_api.search_product(
 
     stock_status = "✅ В наличии" if product.in_stock else "❌ Нет в наличии"
     text = (
-        f"📦 <b>{product.name}</b>\n\n"
+        f" <b>{product.name}</b>\n\n"
         f"💰 <b>Цена:</b> {product.price:.2f} ₽\n"
         f"📋 <b>Каталог:</b> {product.catalog_type_name}\n"
         f"📊 <b>Статус:</b> {stock_status}\n"
@@ -348,9 +346,9 @@ async def cmd_stats(message: Message):
     stats = await get_user_stats()
     text = (
         f"📊 <b>Статистика бота</b>\n\n"
-        f"👥 Всего пользователей: <b>{stats['total_users']}</b>\n"
+        f" Всего пользователей: <b>{stats['total_users']}</b>\n"
         f"🟢 Активных за 24ч: <b>{stats['active_24h']}</b>\n"
-        f" Всего поисков: <b>{stats['total_searches']}</b>\n\n"
+        f"🔍 Всего поисков: <b>{stats['total_searches']}</b>\n\n"
         f"<b>🏆 Топ-10 пользователей:</b>\n"
     )
     for i, user in enumerate(stats['top_users'], 1):
@@ -393,15 +391,15 @@ async def cmd_user(message: Message):
     user = user_data['user']
     username = f"@{user['username']}" if user['username'] else 'нет'
     text = (
-        f"👤 <b>Информация о пользователе</b>\n\n"
-        f"🆔 ID: <code>{user_id}</code>\n"
+        f" <b>Информация о пользователе</b>\n\n"
+        f" ID: <code>{user_id}</code>\n"
         f"👤 Имя: {user['first_name']} {user['last_name'] or ''}\n"
         f"🔖 Username: {username}\n"
-        f"📅 Первый раз: {user['created_at'][:16]}\n"
+        f" Первый раз: {user['created_at'][:16]}\n"
         f"🕐 Последний раз: {user['last_seen'][:16] if user['last_seen'] else 'никогда'}\n\n"
     )
     if user_data['history']:
-        text += "<b>🔍 Последние поиски:</b>\n"
+        text += "<b> Последние поиски:</b>\n"
         for item in user_data['history'][:5]:
             text += f"• {item['article']} — {item['title'][:30]} ({item['price']}₽)\n"
         text += "\n"
