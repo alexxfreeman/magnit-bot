@@ -13,12 +13,6 @@ from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 logger = logging.getLogger(__name__)
 geolocator = Nominatim(user_agent="magnit_bot_v1", timeout=10)
 
-# Только 2 рабочие комбинации. Больше не перебираем всё подряд.
-API_PAIRS = [
-    ("express", "3"),
-    ("express", "1"),
-]
-
 
 @dataclass
 class Product:
@@ -70,7 +64,7 @@ class MagnitAPI:
         }
 
     async def search_product(self, article: str, shop_code: str = None) -> Optional[Product]:
-        """Основной поиск: HTML для карточки + API для цены в конкретном магазине"""
+        """Основной поиск: HTML для карточки + API для цены"""
         logger.info(f"🔍 Поиск товара {article} (shop_code={shop_code})")
         
         base_product = await self._parse_product_page(article)
@@ -81,7 +75,6 @@ class MagnitAPI:
         if not shop_code:
             return base_product
 
-        # Запрашиваем цену через API
         api_product = await self._search_via_api(article, shop_code)
         if api_product:
             base_product.price = api_product.price
@@ -95,71 +88,71 @@ class MagnitAPI:
         return base_product
 
     async def search_product_in_store(self, article: str, store_code: str) -> Optional[Product]:
-        """ТОЛЬКО API. Используется при проверке 50 магазинов. Без HTML-фоллбэка."""
+        """ТОЛЬКО API для проверки в конкретном магазине"""
         return await self._search_via_api(article, store_code)
 
     async def _search_via_api(self, article: str, store_code: str) -> Optional[Product]:
-    """Поиск товара через API с перебором числовых storeType/catalogType"""
-    # Числовые комбинации (как в URL: shopType=1, catalogType=1)
-    combinations = [
-        (1, 1),  # Как в ссылке пользователя
-        (1, 3),
-        (2, 2),
-        (3, 3),
-        ("express", "3"),  # Строковые (на случай если работают)
-        ("express", "1"),
-    ]
-    
-    for store_type, catalog_type in combinations:
-        payload = {
-            "term": article,
-            "storeCode": store_code,
-            "storeType": store_type,
-            "catalogType": catalog_type,
-            "includeAdultGoods": True,
-            "pagination": {"offset": 0, "limit": 36},
-            "sort": {"order": "desc", "type": "popularity"}
-        }
+        """Поиск товара через API с перебором числовых storeType/catalogType"""
+        # Числовые комбинации (как в URL: shopType=1, catalogType=1)
+        combinations = [
+            (1, 1),
+            (1, 3),
+            (2, 2),
+            (3, 3),
+            ("express", "3"),
+            ("express", "1"),
+        ]
+        
+        for store_type, catalog_type in combinations:
+            payload = {
+                "term": article,
+                "storeCode": store_code,
+                "storeType": store_type,
+                "catalogType": catalog_type,
+                "includeAdultGoods": True,
+                "pagination": {"offset": 0, "limit": 36},
+                "sort": {"order": "desc", "type": "popularity"}
+            }
 
-        try:
-            response = self.scraper.post(
-                self.SEARCH_URL, json=payload, headers=self.api_headers, timeout=8
-            )
-            
-            if response.status_code != 200:
-                logger.debug(f"⚠️ HTTP {response.status_code} для {store_code} (st={store_type}, ct={catalog_type})")
+            try:
+                response = self.scraper.post(
+                    self.SEARCH_URL, json=payload, headers=self.api_headers, timeout=8
+                )
+                
+                if response.status_code != 200:
+                    logger.debug(f"⚠️ HTTP {response.status_code} для {store_code} (st={store_type}, ct={catalog_type})")
+                    continue
+
+                data = response.json()
+                if not data.get("isSearchByArticle"):
+                    continue
+
+                items = data.get("items", [])
+                if not items:
+                    continue
+
+                item = items[0]
+                logger.info(f"✅ {store_code} (st={store_type}, ct={catalog_type}): {item.get('name', '')}")
+                
+                return Product(
+                    id=str(item.get("id") or item.get("productId") or article),
+                    name=item.get("name", ""),
+                    price=item.get("price", 0) / 100,
+                    quantity=item.get("quantity", 0),
+                    store_code=item.get("storeCode", store_code),
+                    image_url=self._get_image_url(item),
+                    rating=item.get("ratings", {}).get("rating", 0) if isinstance(item.get("ratings"), dict) else 0,
+                    is_adult=item.get("isForAdults", False),
+                    seo_code=item.get("seoCode", ""),
+                    catalog_type=str(catalog_type),
+                    catalog_type_name="🏪 В магазине"
+                )
+            except Exception as e:
+                logger.debug(f"⚠️ Ошибка {store_code} (st={store_type}, ct={catalog_type}): {e}")
                 continue
-
-            data = response.json()
-            if not data.get("isSearchByArticle"):
-                continue
-
-            items = data.get("items", [])
-            if not items:
-                continue
-
-            item = items[0]
-            logger.info(f"✅ {store_code} (st={store_type}, ct={catalog_type}): {item.get('name', '')}")
-            
-            return Product(
-                id=str(item.get("id") or item.get("productId") or article),
-                name=item.get("name", ""),
-                price=item.get("price", 0) / 100,
-                quantity=item.get("quantity", 0),
-                store_code=item.get("storeCode", store_code),
-                image_url=self._get_image_url(item),
-                rating=item.get("ratings", {}).get("rating", 0) if isinstance(item.get("ratings"), dict) else 0,
-                is_adult=item.get("isForAdults", False),
-                seo_code=item.get("seoCode", ""),
-                catalog_type=str(catalog_type),
-                catalog_type_name="🏪 В магазине"
-            )
-        except Exception as e:
-            logger.debug(f"⚠️ Ошибка {store_code} (st={store_type}, ct={catalog_type}): {e}")
-            continue
-    
-    logger.warning(f"❌ {store_code}: ни одна комбинация не сработала")
-    return None
+        
+        logger.warning(f"❌ {store_code}: ни одна комбинация не сработала")
+        return None
 
     async def _parse_product_page(self, article: str) -> Optional[Product]:
         """Парсит HTML ТОЛЬКО для получения названия, картинки и seo_code"""
@@ -167,10 +160,14 @@ class MagnitAPI:
         for url in urls:
             try:
                 resp = self.scraper.get(url, headers=self.html_headers, timeout=10)
-                if resp.status_code != 200: continue
+                if resp.status_code != 200:
+                    continue
                 html = resp.text
 
-                match = re.search(r'<script\s+id="__NEXT_DATA__"\s+type="application/json">(.*?)</script>', html, re.DOTALL)
+                match = re.search(
+                    r'<script\s+id="__NEXT_DATA__"\s+type="application/json">(.*?)</script>',
+                    html, re.DOTALL
+                )
                 if match:
                     try:
                         data = json.loads(match.group(1))
@@ -178,30 +175,41 @@ class MagnitAPI:
                         item = pp.get("product") or pp.get("item") or self._find_recursive(pp)
                         if item and isinstance(item, dict):
                             return self._product_from_dict(item, article)
-                    except: pass
+                    except:
+                        pass
 
                 title_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
                 img_match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html)
                 if title_match:
                     name = title_match.group(1)
                     for sep in [' – ', ' - ', ' | ', '—']:
-                        if sep in name: name = name.split(sep)[0].strip(); break
-                    return Product(id=article, name=name, price=0, quantity=0, store_code="web",
-                                   image_url=img_match.group(1) if img_match else "", rating=0, is_adult=False, seo_code="")
-            except: continue
+                        if sep in name:
+                            name = name.split(sep)[0].strip()
+                            break
+                    return Product(
+                        id=article, name=name, price=0, quantity=0, store_code="web",
+                        image_url=img_match.group(1) if img_match else "",
+                        rating=0, is_adult=False, seo_code=""
+                    )
+            except:
+                continue
         return None
 
     def _find_recursive(self, data, d=0):
-        if d > 5: return None
+        if d > 5:
+            return None
         if isinstance(data, dict):
-            if "id" in data and "name" in data: return data
+            if "id" in data and "name" in data:
+                return data
             for v in data.values():
-                r = self._find_recursive(v, d+1)
-                if r: return r
+                r = self._find_recursive(v, d + 1)
+                if r:
+                    return r
         elif isinstance(data, list):
             for i in data:
-                r = self._find_recursive(i, d+1)
-                if r: return r
+                r = self._find_recursive(i, d + 1)
+                if r:
+                    return r
         return None
 
     def _product_from_dict(self, item: dict, article: str) -> Optional[Product]:
@@ -215,18 +223,22 @@ class MagnitAPI:
                 is_adult=bool(item.get("isForAdults", False)),
                 seo_code=item.get("seoCode", "")
             )
-        except: return None
+        except:
+            return None
 
     def _get_image_url(self, item: dict) -> str:
         gal = item.get("gallery", [])
         if gal and isinstance(gal, list) and len(gal) > 0:
             f = gal[0]
-            if isinstance(f, dict): return f.get("url", "")
+            if isinstance(f, dict):
+                return f.get("url", "")
             return str(f)
         if "image" in item:
             img = item["image"]
-            if isinstance(img, list) and img: return img[0] if isinstance(img[0], str) else ""
-            if isinstance(img, str): return img
+            if isinstance(img, list) and img:
+                return img[0] if isinstance(img[0], str) else ""
+            if isinstance(img, str):
+                return img
         return ""
 
     def calculate_bounding_box(self, lat: float, lon: float, radius_km: float) -> dict:
@@ -251,12 +263,14 @@ class MagnitAPI:
         }
         try:
             resp = self.scraper.post(self.STORES_URL, json=payload, headers=self.api_headers, timeout=15)
-            if resp.status_code != 200: return []
+            if resp.status_code != 200:
+                return []
             data = resp.json()
             raw = data.get("items", {}).get("items", [])
             stores = []
             for s in raw:
-                if not s.get("isActive"): continue
+                if not s.get("isActive"):
+                    continue
                 c = s.get("coordinates", {})
                 slat, slon = c.get("latitude", 0), c.get("longitude", 0)
                 dist = geodesic((lat, lon), (slat, slon)).km
@@ -264,7 +278,8 @@ class MagnitAPI:
                 stores.append({
                     "code": code,
                     "name": f"Магнит #{code}",
-                    "latitude": slat, "longitude": slon,
+                    "latitude": slat,
+                    "longitude": slon,
                     "distance": dist,
                     "storeType": s.get("storeTypeV2", "MM")
                 })
@@ -281,7 +296,8 @@ def get_address_from_coordinates(lat: float, lon: float) -> str:
         loc = geolocator.reverse(f"{lat}, {lon}", language="ru", exactly_one=True)
         if loc and loc.address:
             return ", ".join(loc.address.split(",")[0:3])
-    except (GeocoderTimedOut, GeocoderServiceError): pass
+    except (GeocoderTimedOut, GeocoderServiceError):
+        pass
     except Exception as e:
         logger.warning(f"⚠️ Ошибка адреса: {e}")
     return f"Координаты: {lat:.4f}, {lon:.4f}"
