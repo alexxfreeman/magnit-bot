@@ -137,7 +137,7 @@ async def process_location(message: Message, state: FSMContext):
         await message.answer("❌ Не удалось найти магазины рядом с тобой.")
         return
 
-    stores_to_check = stores[:50]
+    stores_to_check = stores[:30]  # Уменьшили до 30 для скорости
     await message.answer(
         f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие в {len(stores_to_check)} магазинах..."
     )
@@ -176,7 +176,7 @@ async def process_location(message: Message, state: FSMContext):
             results.append(res)
 
     if not results:
-        await message.answer("❌ Товар не найден ни в одном магазине.")
+        await message.answer("❌ Товар не найден ни в одном магазине (API не вернул данные).")
         return
 
     in_stock = sorted([r for r in results if r["in_stock"]], key=lambda x: x["price"])
@@ -185,7 +185,7 @@ async def process_location(message: Message, state: FSMContext):
 
     text = f"📊 <b>Результаты проверки артикула {article}</b>\n\n"
     text += f"🏪 Запрошено магазинов: {len(stores_to_check)}\n"
-    text += f"✅ Найдено товаров: {len(results)}\n"
+    text += f"✅ API вернул данные для: <b>{len(results)}</b> магазинов\n"
     text += f"🟢 В наличии в <b>{len(in_stock)}</b> магазинах\n\n"
 
     if in_stock:
