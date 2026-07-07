@@ -30,7 +30,7 @@ dp = Dispatcher()
 router = Router()
 
 # ВАШ Telegram ID (узнать у @userinfobot)
-ADMIN_ID = 123456789  # ← ЗАМЕНИТЕ НА СВОЙ ID
+ADMIN_ID = 516400446  # ← ЗАМЕНИТЕ НА СВОЙ ID
 
 
 class ScanStates(StatesGroup):
@@ -252,11 +252,16 @@ async def handle_article(message: Message):
     info_text += "..."
     await message.answer(info_text)
 
-    product = await magnit_api.search_product(
-        article,
-        shop_code=shop_code,
-        catalog_type=catalog_type
-    )
+   # Преобразуем в числа, если они есть
+shop_code_int = int(shop_code) if shop_code and shop_code.isdigit() else None
+catalog_type_int = int(catalog_type) if catalog_type and catalog_type.isdigit() else 1
+
+product = await magnit_api.search_product(
+    article,
+    shop_code=shop_code,
+    store_type=1,  # Фиксируем на 1 (магазин)
+    catalog_type=catalog_type_int
+)
 
     if not product:
         await message.answer(
