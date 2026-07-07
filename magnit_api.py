@@ -2,6 +2,8 @@ import cloudscraper
 import asyncio
 import logging
 import math
+import re
+import json
 from typing import List, Optional
 from dataclasses import dataclass
 from geopy.distance import geodesic
@@ -11,22 +13,16 @@ from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 logger = logging.getLogger(__name__)
 geolocator = Nominatim(user_agent="magnit_bot_v1", timeout=10)
 
+# Небольшой список магазинов из разных регионов — только для проверки наличия
+# когда нужен shopCode. Не полный, просто для подстраховки.
 FALLBACK_STORES = [
-    "760001", "494318", "219282",
-    "764574", "764729",
-    "764557", "388291", "703750", "764548", "764683",
-    "764602", "760004",
-    "947604", "760078",
-    "764657", "720146",
-    "937695", "388641", "760151", "453594", "764525",
-    "323593",
-]
-
-VALID_SERVICE_PAIRS = [
-    (1, 1),
-    (1, 3),
-    (2, 2),
-    (3, 3),
+    "760001",  # Москва
+    "764574",  # СПб
+    "764557",  # Ярославль
+    "947604",  # Урал
+    "764602",  # Сибирь
+    "760004",  # Поволжье
+    "323593",  # из вашего файла
 ]
 
 
@@ -50,7 +46,9 @@ class Product:
 
     @property
     def url(self) -> str:
-        return f"https://magnit.ru/catalog/?q={self.id}"
+        if self.seo_code:
+            return f"https://magnit.ru/catalog/{self.seo_code}/"
+        return f"https://magnit.ru/product/{self.id}"
 
 
 class MagnitAPI:
@@ -61,180 +59,306 @@ class MagnitAPI:
         self.scraper = cloudscraper.create_scraper(browser='chrome')
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Content-Type": "application/json",
-            "Origin": "https://magnit.ru",
-            "Referer": "https://magnit.ru/",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin"
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
         }
 
     async def search_product(
         self,
         article: str,
         shop_code: str = None,
-        store_type = None,
-        catalog_type = None
+        store_type=None,
+        catalog_type=None
     ) -> Optional[Product]:
-        logger.info(f"🔍 Поиск товара {article} (shop_code={shop_code}, store_type={store_type}, catalog_type={catalog_type})")
-        
-        # Шаг 1: Пробуем с shopCode (если указан)
+        logger.info(f"🔍 Поиск товара {article}")
+
+        # === СТРАТЕГИЯ 1: Парсинг HTML страницы товара ===
+        logger.info("  → Стратегия 1: Парсинг HTML страницы")
+        product = await self._parse_product_page(article)
+        if product:
+            return product
+
+        # === СТРАТЕГИЯ 2: API поиск (fallback) ===
+        logger.info("  → Стратегия 2: API поиск")
         if shop_code:
-            logger.info(f"  → Шаг 1: Пробую с shopCode={shop_code}")
-            
-            # Пробуем переданные значения
-            if store_type is not None and catalog_type is not None:
-                try:
-                    st_num = int(store_type)
-                    ct_num = int(catalog_type)
-                    logger.info(f"    → Пробую {shop_code} с storeType={st_num}, catalogType={ct_num}")
-                    product = await self._try_search(article, shop_code, st_num, ct_num)
-                    if product:
-                        return product
-                except (ValueError, TypeError):
-                    pass
-            
-            # Перебираем все комбинации
-            for st, ct in VALID_SERVICE_PAIRS:
-                logger.info(f"    → Пробую {shop_code} с storeType={st}, catalogType={ct}")
-                product = await self._try_search(article, shop_code, st, ct)
-                if product:
-                    return product
-            
-            logger.warning(f"  ⚠️ Не нашёл в магазине {shop_code}, пробую без shopCode...")
-        
-        # Шаг 2: Пробуем БЕЗ shopCode — перебираем fallback-магазины
-        logger.info(f"  → Шаг 2: Перебираю {len(FALLBACK_STORES)} fallback-магазинов")
-        codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
-        
-        for code in codes_to_try:
-            for st, ct in VALID_SERVICE_PAIRS:
-                product = await self._try_search(article, code, st, ct)
-                if product:
-                    return product
-            await asyncio.sleep(0.1)
-        
-        # Шаг 3: Пробуем БЕЗ shopCode вообще (если API поддерживает)
-        logger.info(f"  → Шаг 3: Пробую поиск БЕЗ shopCode")
-        for st, ct in VALID_SERVICE_PAIRS:
-            product = await self._try_search_without_store(article, st, ct)
+            product = await self._try_search_api(article, shop_code)
             if product:
                 return product
-        
-        logger.warning(f"  ❌ Товар {article} не найден нигде")
+
+        for code in FALLBACK_STORES:
+            product = await self._try_search_api(article, code)
+            if product:
+                return product
+            await asyncio.sleep(0.1)
+
+        logger.warning(f"  ❌ Товар {article} не найден")
         return None
 
-    async def _try_search(
-        self,
-        article: str,
-        store_code: str,
-        store_type,
-        catalog_type
-    ) -> Optional[Product]:
-        payload = {
-            "term": article,
-            "storeCode": store_code,
-            "storeType": store_type,
-            "catalogType": catalog_type,
-            "includeAdultGoods": True,
-            "pagination": {"offset": 0, "limit": 36},
-            "sort": {"order": "desc", "type": "popularity"}
-        }
+    async def _parse_product_page(self, article: str) -> Optional[Product]:
+        """Парсит HTML страницу товара — самый надёжный способ"""
+        urls_to_try = [
+            f"https://magnit.ru/product/{article}",
+            f"https://magnit.ru/product/{article}/",
+        ]
 
+        for url in urls_to_try:
+            try:
+                response = self.scraper.get(url, headers=self.headers, timeout=15)
+                if response.status_code != 200:
+                    logger.debug(f"  ⚠️ HTTP {response.status_code} для {url}")
+                    continue
+
+                html = response.text
+
+                # Способ 1: Ищем JSON в теге <script id="__NEXT_DATA__">
+                match = re.search(
+                    r'<script\s+id="__NEXT_DATA__"\s+type="application/json">(.*?)</script>',
+                    html,
+                    re.DOTALL
+                )
+                if match:
+                    try:
+                        next_data = json.loads(match.group(1))
+                        product = self._extract_from_next_data(next_data, article)
+                        if product:
+                            logger.info(f"✅ Найден через __NEXT_DATA__: {product.name}")
+                            return product
+                    except json.JSONDecodeError:
+                        pass
+
+                # Способ 2: Ищем JSON в window.__INITIAL_STATE__ или похожих
+                match = re.search(r'window\.__[A-Z_]+__\s*=\s*({.*?});', html, re.DOTALL)
+                if match:
+                    try:
+                        data = json.loads(match.group(1))
+                        product = self._extract_from_initial_state(data, article)
+                        if product:
+                            logger.info(f"✅ Найден через window state: {product.name}")
+                            return product
+                    except json.JSONDecodeError:
+                        pass
+
+                # Способ 3: Ищем JSON-LD (schema.org)
+                match = re.search(
+                    r'<script\s+type="application/ld\+json">(.*?)</script>',
+                    html,
+                    re.DOTALL
+                )
+                if match:
+                    try:
+                        ld_data = json.loads(match.group(1))
+                        product = self._extract_from_ld_json(ld_data, article)
+                        if product:
+                            logger.info(f"✅ Найден через JSON-LD: {product.name}")
+                            return product
+                    except json.JSONDecodeError:
+                        pass
+
+                # Способ 4: Парсим meta-теги (последний шанс)
+                product = self._extract_from_meta_tags(html, article)
+                if product:
+                    logger.info(f"✅ Найден через meta-теги: {product.name}")
+                    return product
+
+            except Exception as e:
+                logger.error(f"  ❌ Ошибка парсинга {url}: {e}")
+                continue
+
+        return None
+
+    def _extract_from_next_data(self, data: dict, article: str) -> Optional[Product]:
+        """Извлекает товар из __NEXT_DATA__"""
         try:
-            response = self.scraper.post(
-                self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
+            # Ищем товар в props.pageProps
+            page_props = data.get("props", {}).get("pageProps", {})
+            
+            # Пробуем разные пути
+            item = (
+                page_props.get("product") or
+                page_props.get("item") or
+                page_props.get("data", {}).get("product") or
+                page_props.get("initialState", {}).get("product", {}).get("current")
             )
-
-            if response.status_code != 200:
-                logger.debug(f"    ⚠️ HTTP {response.status_code} от {store_code}")
+            
+            if not item:
+                # Ищем рекурсивно
+                item = self._find_product_recursive(page_props)
+            
+            if not item or not isinstance(item, dict):
                 return None
 
-            data = response.json()
-            if not data.get("isSearchByArticle"):
-                return None
-
-            items = data.get("items", [])
-            if not items:
-                return None
-
-            item = items[0]
-            logger.info(f"✅ Найден в {store_code} (storeType={store_type}, catalogType={catalog_type}): {item.get('name', '')}")
-
-            return Product(
-                id=item.get("id") or item.get("productId"),
-                name=item.get("name", "Без названия"),
-                price=item.get("price", 0) / 100,
-                quantity=item.get("quantity", 0),
-                store_code=item.get("storeCode", store_code),
-                image_url=self._get_image_url(item),
-                rating=item.get("ratings", {}).get("rating", 0),
-                is_adult=item.get("isForAdults", False),
-                seo_code=item.get("seoCode", ""),
-                catalog_type=str(catalog_type),
-                catalog_type_name="🏪 В магазине"
-            )
+            return self._product_from_dict(item, article)
         except Exception as e:
-            logger.error(f"    ❌ Ошибка {store_code}: {e}")
+            logger.debug(f"  ⚠️ Ошибка извлечения из NEXT_DATA: {e}")
             return None
 
-    async def _try_search_without_store(
-        self,
-        article: str,
-        store_type,
-        catalog_type
-    ) -> Optional[Product]:
-        """Поиск БЕЗ shopCode — только по артикулу"""
-        payload = {
-            "term": article,
-            "storeType": store_type,
-            "catalogType": catalog_type,
-            "includeAdultGoods": True,
-            "pagination": {"offset": 0, "limit": 36},
-            "sort": {"order": "desc", "type": "popularity"}
-        }
-
+    def _extract_from_initial_state(self, data: dict, article: str) -> Optional[Product]:
+        """Извлекает товар из window.__INITIAL_STATE__"""
         try:
-            response = self.scraper.post(
-                self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
-            )
+            item = self._find_product_recursive(data)
+            if item:
+                return self._product_from_dict(item, article)
+        except Exception as e:
+            logger.debug(f"  ⚠️ Ошибка извлечения из initial state: {e}")
+        return None
 
-            if response.status_code != 200:
-                return None
+    def _extract_from_ld_json(self, data: dict, article: str) -> Optional[Product]:
+        """Извлекает товар из JSON-LD (schema.org)"""
+        try:
+            if data.get("@type") in ["Product", "product"]:
+                name = data.get("name", "")
+                offers = data.get("offers", {})
+                price = 0
+                if isinstance(offers, dict):
+                    price = float(offers.get("price", 0))
+                elif isinstance(offers, list) and offers:
+                    price = float(offers[0].get("price", 0))
 
-            data = response.json()
-            if not data.get("isSearchByArticle"):
-                return None
+                image = data.get("image", "")
+                if isinstance(image, list) and image:
+                    image = image[0]
 
-            items = data.get("items", [])
-            if not items:
-                return None
+                return Product(
+                    id=article,
+                    name=name,
+                    price=price,
+                    quantity=1 if price > 0 else 0,
+                    store_code="web",
+                    image_url=image,
+                    rating=float(data.get("aggregateRating", {}).get("ratingValue", 0) or 0),
+                    is_adult=False,
+                    seo_code="",
+                )
+        except Exception as e:
+            logger.debug(f"  ⚠️ Ошибка извлечения из JSON-LD: {e}")
+        return None
 
-            item = items[0]
-            logger.info(f"✅ Найден БЕЗ shopCode (storeType={store_type}, catalogType={catalog_type}): {item.get('name', '')}")
+    def _extract_from_meta_tags(self, html: str, article: str) -> Optional[Product]:
+        """Извлекает данные из meta-тегов (og:title, og:image и т.д.)"""
+        try:
+            title_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
+            image_match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html)
+            price_match = re.search(r'"price"\s*:\s*"?([\d.]+)"?', html)
+
+            if title_match:
+                name = title_match.group(1)
+                image = image_match.group(1) if image_match else ""
+                price = float(price_match.group(1)) if price_match else 0
+
+                return Product(
+                    id=article,
+                    name=name,
+                    price=price,
+                    quantity=1 if price > 0 else 0,
+                    store_code="web",
+                    image_url=image,
+                    rating=0,
+                    is_adult=False,
+                    seo_code="",
+                )
+        except Exception as e:
+            logger.debug(f"  ⚠️ Ошибка извлечения из meta: {e}")
+        return None
+
+    def _find_product_recursive(self, data, depth=0) -> Optional[dict]:
+        """Рекурсивно ищет объект товара в структуре данных"""
+        if depth > 10:
+            return None
+        
+        if isinstance(data, dict):
+            # Проверяем, похож ли этот dict на товар
+            if "id" in data and "name" in data and "price" in data:
+                return data
+            if "productId" in data and "name" in data:
+                return data
+            # Рекурсивно ищем в значениях
+            for value in data.values():
+                result = self._find_product_recursive(value, depth + 1)
+                if result:
+                    return result
+        elif isinstance(data, list):
+            for item in data:
+                result = self._find_product_recursive(item, depth + 1)
+                if result:
+                    return result
+        return None
+
+    def _product_from_dict(self, item: dict, article: str) -> Optional[Product]:
+        """Создаёт Product из словаря"""
+        try:
+            price_raw = item.get("price", 0)
+            if isinstance(price_raw, str):
+                price_raw = float(price_raw.replace(",", "."))
+            # Если цена в копейках (> 100000), делим на 100
+            if price_raw > 100000:
+                price_raw = price_raw / 100
 
             return Product(
-                id=item.get("id") or item.get("productId"),
+                id=str(item.get("id") or item.get("productId") or article),
                 name=item.get("name", "Без названия"),
-                price=item.get("price", 0) / 100,
-                quantity=item.get("quantity", 0),
-                store_code=item.get("storeCode", "unknown"),
+                price=float(price_raw),
+                quantity=int(item.get("quantity", 0) or 0),
+                store_code=str(item.get("storeCode", "web")),
                 image_url=self._get_image_url(item),
-                rating=item.get("ratings", {}).get("rating", 0),
-                is_adult=item.get("isForAdults", False),
+                rating=float(item.get("ratings", {}).get("rating", 0) if isinstance(item.get("ratings"), dict) else 0),
+                is_adult=bool(item.get("isForAdults", False)),
                 seo_code=item.get("seoCode", ""),
-                catalog_type=str(catalog_type),
-                catalog_type_name="🏪 В магазине"
             )
         except Exception as e:
-            logger.error(f"    ❌ Ошибка поиска без shopCode: {e}")
+            logger.error(f"  ❌ Ошибка создания Product: {e}")
             return None
+
+    async def _try_search_api(self, article: str, store_code: str) -> Optional[Product]:
+        """Резервный поиск через API"""
+        for store_type, catalog_type in [(1, 1), (1, 3), ("MM", "1")]:
+            payload = {
+                "term": article,
+                "storeCode": store_code,
+                "storeType": store_type,
+                "catalogType": catalog_type,
+                "includeAdultGoods": True,
+                "pagination": {"offset": 0, "limit": 36},
+                "sort": {"order": "desc", "type": "popularity"}
+            }
+            try:
+                response = self.scraper.post(
+                    self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
+                )
+                if response.status_code != 200:
+                    continue
+                data = response.json()
+                if not data.get("isSearchByArticle"):
+                    continue
+                items = data.get("items", [])
+                if not items:
+                    continue
+                item = items[0]
+                logger.info(f"✅ Найден через API в {store_code}: {item.get('name', '')}")
+                return self._product_from_dict(item, article)
+            except Exception as e:
+                logger.debug(f"  ⚠️ API ошибка {store_code}: {e}")
+                continue
+        return None
 
     def _get_image_url(self, item: dict) -> str:
         gallery = item.get("gallery", [])
-        return gallery[0].get("url", "") if gallery else ""
+        if gallery and isinstance(gallery, list) and len(gallery) > 0:
+            first = gallery[0]
+            if isinstance(first, dict):
+                return first.get("url", "")
+            return str(first)
+        if "image" in item:
+            img = item["image"]
+            if isinstance(img, list) and img:
+                return img[0] if isinstance(img[0], str) else ""
+            if isinstance(img, str):
+                return img
+        return ""
 
     def calculate_bounding_box(self, lat: float, lon: float, radius_km: float) -> dict:
         lat_delta = radius_km / 111.0
@@ -256,18 +380,15 @@ class MagnitAPI:
                 "storeTypeListV2": ["MM", "GM", "DG", "MO", "ME", "MC", "DARKSTORE", "MM_MINI", "ZARYAD"]
             }
         }
-
         try:
             response = self.scraper.post(
                 self.STORES_URL, json=payload, headers=self.headers, timeout=15
             )
             if response.status_code != 200:
                 return []
-
             data = response.json()
             stores_raw = data.get("items", {}).get("items", [])
             stores = []
-
             for store in stores_raw:
                 if not store.get("isActive", False):
                     continue
@@ -276,7 +397,6 @@ class MagnitAPI:
                 store_lon = coords.get("longitude", 0)
                 distance = geodesic((lat, lon), (store_lat, store_lon)).km
                 store_code = store.get("externalId", {}).get("storeCode", "")
-
                 stores.append({
                     "code": store_code,
                     "name": f"Магнит #{store_code}",
@@ -286,7 +406,6 @@ class MagnitAPI:
                     "distance": distance,
                     "storeType": store.get("storeTypeV2", "MM")
                 })
-
             stores.sort(key=lambda x: x["distance"])
             logger.info(f"Найдено {len(stores)} магазинов в радиусе {radius_km} км")
             return stores
@@ -300,8 +419,8 @@ def get_address_from_coordinates(lat: float, lon: float) -> str:
         location = geolocator.reverse(f"{lat}, {lon}", language="ru", exactly_one=True)
         if location and location.address:
             return ", ".join(location.address.split(",")[0:3])
-    except (GeocoderTimedOut, GeocoderServiceError) as e:
-        logger.warning(f"⏱️ Таймаут получения адреса для ({lat:.4f}, {lon:.4f})")
+    except (GeocoderTimedOut, GeocoderServiceError):
+        pass
     except Exception as e:
         logger.warning(f"⚠️ Ошибка получения адреса: {e}")
     return f"Координаты: {lat:.4f}, {lon:.4f}"
