@@ -34,7 +34,7 @@ class Product:
     is_adult: bool
     seo_code: str
     catalog_type: str = "1"
-    catalog_type_name: str = " В магазине"
+    catalog_type_name: str = "🏪 В магазине"
 
     @property
     def in_stock(self) -> bool:
@@ -67,12 +67,13 @@ class MagnitAPI:
         self,
         article: str,
         shop_code: str = None,
-        store_type: int = 1,  # Теперь число!
-        catalog_type: int = 1  # Теперь число!
+        store_type: str = "MM",  # Теперь строка! "MM", "DG", "MC" и т.д.
+        catalog_type: int = 1    # Число (1, 2, 3)
     ) -> Optional[Product]:
         """
         Поиск товара.
-        store_type и catalog_type — ЧИСЛА (1, 2, 3), а не строки!
+        store_type — СТРОКА ("MM", "DG", "MC")
+        catalog_type — ЧИСЛО (1, 2, 3)
         """
         if shop_code:
             return await self._try_search(article, shop_code, store_type, catalog_type)
@@ -90,14 +91,14 @@ class MagnitAPI:
         self,
         article: str,
         store_code: str,
-        store_type: int,
+        store_type: str,
         catalog_type: int
     ) -> Optional[Product]:
         payload = {
             "term": article,
             "storeCode": store_code,
-            "storeType": store_type,  # Число, не строка!
-            "catalogType": catalog_type,  # Число, не строка!
+            "storeType": store_type,  # СТРОКА: "MM", "DG", "MC"
+            "catalogType": catalog_type,  # ЧИСЛО: 1, 2, 3
             "includeAdultGoods": True,
             "pagination": {"offset": 0, "limit": 36},
             "sort": {"order": "desc", "type": "popularity"}
@@ -115,7 +116,7 @@ class MagnitAPI:
             data = response.json()
             
             if not data.get("isSearchByArticle"):
-                logger.warning(f"⚠️ isSearchByArticle=False для {article} в {store_code}")
+                logger.warning(f"️ isSearchByArticle=False для {article} в {store_code}")
                 return None
 
             items = data.get("items", [])
@@ -136,7 +137,7 @@ class MagnitAPI:
                 is_adult=item.get("isForAdults", False),
                 seo_code=item.get("seoCode", ""),
                 catalog_type=str(catalog_type),
-                catalog_type_name=" В магазине"
+                catalog_type_name="🏪 В магазине"
             )
         except Exception as e:
             logger.error(f"❌ Исключение при запросе {store_code}: {e}")
