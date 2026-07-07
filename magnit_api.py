@@ -2,7 +2,7 @@ import cloudscraper
 import asyncio
 import logging
 import math
-from typing import List, Dict, Optional
+from typing import List, Optional
 from dataclasses import dataclass
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
@@ -10,15 +10,14 @@ from geopy.geocoders import Nominatim
 logger = logging.getLogger(__name__)
 geolocator = Nominatim(user_agent="magnit_bot_v1")
 
-# Магазины из разных регионов РФ
 FALLBACK_STORES = [
-    "760001", "494318", "219282",  # Москва
-    "764574", "764729",  # СПб
-    "764557", "388291", "703750", "764548", "764683",  # Ярославль
-    "764602", "760004",  # Юг
-    "947604", "760078",  # Урал
-    "764657", "720146",  # Сибирь
-    "937695", "388641", "760151", "453594", "764525",  # Другие регионы
+    "760001", "494318", "219282",
+    "764574", "764729",
+    "764557", "388291", "703750", "764548", "764683",
+    "764602", "760004",
+    "947604", "760078",
+    "764657", "720146",
+    "937695", "388641", "760151", "453594", "764525",
 ]
 
 
@@ -64,41 +63,41 @@ class MagnitAPI:
         }
 
     async def search_product(
-    self,
-    article: str,
-    shop_code: str = None,
-    store_type: str = "MM",   # Строка
-    catalog_type: str = "1"   # Теперь тоже СТРОКА!
-) -> Optional[Product]:
-    if shop_code:
-        return await self._try_search(article, shop_code, store_type, catalog_type)
+        self,
+        article: str,
+        shop_code: str = None,
+        store_type: str = "MM",
+        catalog_type: str = "1"
+    ) -> Optional[Product]:
+        if shop_code:
+            return await self._try_search(article, shop_code, store_type, catalog_type)
 
-    codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
-    for code in codes_to_try:
-        product = await self._try_search(article, code, store_type, catalog_type)
-        if product:
-            return product
-        await asyncio.sleep(0.2)
+        codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
+        for code in codes_to_try:
+            product = await self._try_search(article, code, store_type, catalog_type)
+            if product:
+                return product
+            await asyncio.sleep(0.2)
 
-    return None
+        return None
 
     async def _try_search(
-    self,
-    article: str,
-    store_code: str,
-    store_type: str,
-    catalog_type: str   # СТРОКА!
-) -> Optional[Product]:
-    payload = {
-        "term": article,
-        "storeCode": store_code,
-        "storeType": store_type,      # Строка: "MM"
-        "catalogType": catalog_type,  # Строка: "1"
-        "includeAdultGoods": True,
-        "pagination": {"offset": 0, "limit": 36},
-        "sort": {"order": "desc", "type": "popularity"}
-    }
-  
+        self,
+        article: str,
+        store_code: str,
+        store_type: str,
+        catalog_type: str
+    ) -> Optional[Product]:
+        payload = {
+            "term": article,
+            "storeCode": store_code,
+            "storeType": store_type,
+            "catalogType": catalog_type,
+            "includeAdultGoods": True,
+            "pagination": {"offset": 0, "limit": 36},
+            "sort": {"order": "desc", "type": "popularity"}
+        }
+
         try:
             response = self.scraper.post(
                 self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
@@ -109,9 +108,8 @@ class MagnitAPI:
                 return None
 
             data = response.json()
-            
+
             if not data.get("isSearchByArticle"):
-                logger.warning(f"️ isSearchByArticle=False для {article} в {store_code}")
                 return None
 
             items = data.get("items", [])
@@ -131,11 +129,11 @@ class MagnitAPI:
                 rating=item.get("ratings", {}).get("rating", 0),
                 is_adult=item.get("isForAdults", False),
                 seo_code=item.get("seoCode", ""),
-                catalog_type=str(catalog_type),
+                catalog_type=catalog_type,
                 catalog_type_name="🏪 В магазине"
             )
         except Exception as e:
-            logger.error(f"❌ Исключение при запросе {store_code}: {e}")
+            logger.error(f" Исключение при запросе {store_code}: {e}")
             return None
 
     def _get_image_url(self, item: dict) -> str:
