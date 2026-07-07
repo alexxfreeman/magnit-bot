@@ -34,7 +34,7 @@ class Product:
     is_adult: bool
     seo_code: str
     catalog_type: str = "1"
-    catalog_type_name: str = "🏪 В магазине"
+    catalog_type_name: str = " В магазине"
 
     @property
     def in_stock(self) -> bool:
@@ -50,7 +50,6 @@ class MagnitAPI:
     STORES_URL = "https://magnit.ru/webgate/v1/stores-facade/search"
 
     def __init__(self):
-        # Имитируем настоящий Chrome браузер
         self.scraper = cloudscraper.create_scraper(browser='chrome')
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -68,9 +67,13 @@ class MagnitAPI:
         self,
         article: str,
         shop_code: str = None,
-        store_type: str = "express",
-        catalog_type: str = "1"
+        store_type: int = 1,  # Теперь число!
+        catalog_type: int = 1  # Теперь число!
     ) -> Optional[Product]:
+        """
+        Поиск товара.
+        store_type и catalog_type — ЧИСЛА (1, 2, 3), а не строки!
+        """
         if shop_code:
             return await self._try_search(article, shop_code, store_type, catalog_type)
 
@@ -79,7 +82,7 @@ class MagnitAPI:
             product = await self._try_search(article, code, store_type, catalog_type)
             if product:
                 return product
-            await asyncio.sleep(0.2)  # Чуть увеличили задержку для обхода WAF
+            await asyncio.sleep(0.2)
 
         return None
 
@@ -87,14 +90,14 @@ class MagnitAPI:
         self,
         article: str,
         store_code: str,
-        store_type: str,
-        catalog_type: str
+        store_type: int,
+        catalog_type: int
     ) -> Optional[Product]:
         payload = {
             "term": article,
             "storeCode": store_code,
-            "storeType": store_type,
-            "catalogType": catalog_type,
+            "storeType": store_type,  # Число, не строка!
+            "catalogType": catalog_type,  # Число, не строка!
             "includeAdultGoods": True,
             "pagination": {"offset": 0, "limit": 36},
             "sort": {"order": "desc", "type": "popularity"}
@@ -105,7 +108,6 @@ class MagnitAPI:
                 self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
             )
 
-            # Подробное логирование ошибок
             if response.status_code != 200:
                 logger.error(f"⛔ HTTP {response.status_code} от {store_code}. Ответ: {response.text[:150]}")
                 return None
@@ -113,7 +115,7 @@ class MagnitAPI:
             data = response.json()
             
             if not data.get("isSearchByArticle"):
-                logger.warning(f"⚠️ API вернул isSearchByArticle=False для {article} в {store_code}. Ключи ответа: {list(data.keys())[:5]}")
+                logger.warning(f"⚠️ isSearchByArticle=False для {article} в {store_code}")
                 return None
 
             items = data.get("items", [])
@@ -121,7 +123,7 @@ class MagnitAPI:
                 return None
 
             item = items[0]
-            logger.info(f"✅ Товар найден в {store_code}: {item.get('name', '')}")
+            logger.info(f"✅ Товар найден в {store_code} (storeType={store_type}, catalogType={catalog_type}): {item.get('name', '')}")
 
             return Product(
                 id=item.get("id") or item.get("productId"),
@@ -133,11 +135,11 @@ class MagnitAPI:
                 rating=item.get("ratings", {}).get("rating", 0),
                 is_adult=item.get("isForAdults", False),
                 seo_code=item.get("seoCode", ""),
-                catalog_type=catalog_type,
+                catalog_type=str(catalog_type),
                 catalog_type_name=" В магазине"
             )
         except Exception as e:
-            logger.error(f" Исключение при запросе {store_code}: {e}")
+            logger.error(f"❌ Исключение при запросе {store_code}: {e}")
             return None
 
     def _get_image_url(self, item: dict) -> str:
