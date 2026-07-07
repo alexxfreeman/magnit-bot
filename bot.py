@@ -100,7 +100,7 @@ async def cmd_check_all(message: Message, state: FSMContext):
         return
     await state.update_data(article=user_last_article[user_id])
     kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=" Отправить геолокацию", request_location=True)]],
+        keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
         resize_keyboard=True
     )
     await message.answer(
@@ -114,7 +114,7 @@ async def cmd_check_all(message: Message, state: FSMContext):
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(" Действие отменено.", reply_markup=ReplyKeyboardRemove())
+    await message.answer("❌ Действие отменено.", reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(ScanStates.waiting_for_location, F.location)
@@ -127,8 +127,8 @@ async def process_location(message: Message, state: FSMContext):
 
     await message.answer(
         f"🔍 Ищу магазины рядом...\n"
-        f" Координаты: {lat:.4f}, {lon:.4f}\n"
-        f" Артикул: {article}",
+        f"📍 Координаты: {lat:.4f}, {lon:.4f}\n"
+        f"📦 Артикул: {article}",
         reply_markup=ReplyKeyboardRemove()
     )
 
@@ -151,8 +151,8 @@ async def process_location(message: Message, state: FSMContext):
             product = await magnit_api.search_product(
                 article,
                 shop_code=store_code,
-                store_type="express",
-                catalog_type="3"
+                store_type=1,
+                catalog_type=1
             )
             checked_count += 1
             if product:
@@ -212,11 +212,11 @@ async def process_location(message: Message, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=" Новый поиск", callback_data="new_search")],
+            [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")],
             [InlineKeyboardButton(text="📊 Проверить другой товар", callback_data="check_all_other")]
         ]
     )
-    await message.answer(" Что хотите сделать дальше?", reply_markup=keyboard)
+    await message.answer("💡 Что хотите сделать дальше?", reply_markup=keyboard)
 
 
 @router.message(ScanStates.waiting_for_location, F.text)
@@ -224,7 +224,7 @@ async def wrong_input_during_location(message: Message):
     if message.text == "/cancel":
         return
     await message.answer(
-        "️ Пожалуйста, отправь геолокацию через кнопку ниже.\nИли /cancel чтобы отменить.",
+        "⚠️ Пожалуйста, отправь геолокацию через кнопку ниже.\nИли /cancel чтобы отменить.",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
             resize_keyboard=True
@@ -254,13 +254,11 @@ async def handle_article(message: Message):
     info_text += "..."
     await message.answer(info_text)
 
-    catalog_type_str = catalog_type if catalog_type else "3"
-
     product = await magnit_api.search_product(
         article,
         shop_code=shop_code,
-        store_type="express",
-        catalog_type=catalog_type_str
+        store_type=catalog_type,
+        catalog_type=catalog_type
     )
 
     if not product:
@@ -314,7 +312,7 @@ async def callback_new_search(callback_query: CallbackQuery):
 async def callback_check_all(callback_query: CallbackQuery, state: FSMContext):
     user_id = callback_query.from_user.id
     if user_id not in user_last_article:
-        await callback_query.message.answer(" Сначала найдите товар.")
+        await callback_query.message.answer("❌ Сначала найдите товар.")
         await callback_query.answer()
         return
     await state.update_data(article=user_last_article[user_id])
@@ -346,7 +344,7 @@ async def cmd_stats(message: Message):
     text = (
         f"📊 <b>Статистика бота</b>\n\n"
         f"👥 Всего пользователей: <b>{stats['total_users']}</b>\n"
-        f" Активных за 24ч: <b>{stats['active_24h']}</b>\n"
+        f"🟢 Активных за 24ч: <b>{stats['active_24h']}</b>\n"
         f"🔍 Всего поисков: <b>{stats['total_searches']}</b>\n\n"
         f"<b>🏆 Топ-10 пользователей:</b>\n"
     )
@@ -391,11 +389,11 @@ async def cmd_user(message: Message):
     username = f"@{user['username']}" if user['username'] else 'нет'
     text = (
         f"👤 <b>Информация о пользователе</b>\n\n"
-        f" ID: <code>{user_id}</code>\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
         f"👤 Имя: {user['first_name']} {user['last_name'] or ''}\n"
         f"🔖 Username: {username}\n"
-        f" Первый раз: {user['created_at'][:16]}\n"
-        f" Последний раз: {user['last_seen'][:16] if user['last_seen'] else 'никогда'}\n\n"
+        f"📅 Первый раз: {user['created_at'][:16]}\n"
+        f"🕐 Последний раз: {user['last_seen'][:16] if user['last_seen'] else 'никогда'}\n\n"
     )
     if user_data['history']:
         text += "<b>🔍 Последние поиски:</b>\n"
