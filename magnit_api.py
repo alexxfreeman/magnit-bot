@@ -10,7 +10,7 @@ from geopy.geocoders import Nominatim
 logger = logging.getLogger(__name__)
 geolocator = Nominatim(user_agent="magnit_bot_v1")
 
-# Магазины из разных регионов РФ (только для первичного поиска, когда магазин не указан)
+# Магазины из разных регионов РФ
 FALLBACK_STORES = [
     "760001", "494318", "219282",  # Москва
     "764574", "764729",  # СПб
@@ -50,13 +50,18 @@ class MagnitAPI:
     STORES_URL = "https://magnit.ru/webgate/v1/stores-facade/search"
 
     def __init__(self):
-        self.scraper = cloudscraper.create_scraper()
+        # Имитируем настоящий Chrome браузер
+        self.scraper = cloudscraper.create_scraper(browser='chrome')
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
             "Content-Type": "application/json",
             "Origin": "https://magnit.ru",
-            "Referer": "https://magnit.ru/"
+            "Referer": "https://magnit.ru/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin"
         }
 
     async def search_product(
@@ -64,26 +69,17 @@ class MagnitAPI:
         article: str,
         shop_code: str = None,
         store_type: str = "express",
-        catalog_type: str = "1"  # Фиксируем на основном каталоге для скорости
+        catalog_type: str = "1"
     ) -> Optional[Product]:
-        """
-        Поиск товара.
-        Логика:
-        1. Если shop_code передан (проверка конкретного магазина) -> ищем ТОЛЬКО в нём.
-        2. Если shop_code НЕ передан (первичный поиск) -> перебираем FALLBACK_STORES.
-        3. catalogType зафиксирован на "1", перебор убран для ускорения в 3 раза.
-        """
         if shop_code:
-            # Проверяем конкретный магазин без лишних запросов
             return await self._try_search(article, shop_code, store_type, catalog_type)
 
-        # Перебор fallback-магазинов (только для первичного поиска)
         codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
         for code in codes_to_try:
             product = await self._try_search(article, code, store_type, catalog_type)
             if product:
                 return product
-            await asyncio.sleep(0.1)  # Защита от rate-limit
+            await asyncio.sleep(0.2)  # Чуть увеличили задержку для обхода WAF
 
         return None
 
@@ -94,7 +90,6 @@ class MagnitAPI:
         store_type: str,
         catalog_type: str
     ) -> Optional[Product]:
-        """Одиночный запрос к API"""
         payload = {
             "term": article,
             "storeCode": store_code,
@@ -109,11 +104,16 @@ class MagnitAPI:
             response = self.scraper.post(
                 self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
             )
+
+            # Подробное логирование ошибок
             if response.status_code != 200:
+                logger.error(f"⛔ HTTP {response.status_code} от {store_code}. Ответ: {response.text[:150]}")
                 return None
 
             data = response.json()
+            
             if not data.get("isSearchByArticle"):
+                logger.warning(f"⚠️ API вернул isSearchByArticle=False для {article} в {store_code}. Ключи ответа: {list(data.keys())[:5]}")
                 return None
 
             items = data.get("items", [])
@@ -121,7 +121,7 @@ class MagnitAPI:
                 return None
 
             item = items[0]
-            logger.debug(f"✅ Товар найден в {store_code}: {item.get('name', '')}")
+            logger.info(f"✅ Товар найден в {store_code}: {item.get('name', '')}")
 
             return Product(
                 id=item.get("id") or item.get("productId"),
@@ -134,10 +134,10 @@ class MagnitAPI:
                 is_adult=item.get("isForAdults", False),
                 seo_code=item.get("seoCode", ""),
                 catalog_type=catalog_type,
-                catalog_type_name="🏪 В магазине"
+                catalog_type_name=" В магазине"
             )
         except Exception as e:
-            logger.error(f"Ошибка запроса {store_code}: {e}")
+            logger.error(f" Исключение при запросе {store_code}: {e}")
             return None
 
     def _get_image_url(self, item: dict) -> str:
@@ -170,6 +170,7 @@ class MagnitAPI:
                 self.STORES_URL, json=payload, headers=self.headers, timeout=15
             )
             if response.status_code != 200:
+                logger.error(f"⛔ Ошибка магазинов HTTP {response.status_code}: {response.text[:100]}")
                 return []
 
             data = response.json()
