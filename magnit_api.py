@@ -80,37 +80,50 @@ class MagnitAPI:
     ) -> Optional[Product]:
         logger.info(f"🔍 Поиск товара {article} (shop_code={shop_code}, store_type={store_type}, catalog_type={catalog_type})")
         
+        # Шаг 1: Пробуем с shopCode (если указан)
         if shop_code:
+            logger.info(f"  → Шаг 1: Пробую с shopCode={shop_code}")
+            
+            # Пробуем переданные значения
             if store_type is not None and catalog_type is not None:
                 try:
                     st_num = int(store_type)
                     ct_num = int(catalog_type)
-                    logger.info(f"  → Пробую {shop_code} с storeType={st_num}, catalogType={ct_num}")
+                    logger.info(f"    → Пробую {shop_code} с storeType={st_num}, catalogType={ct_num}")
                     product = await self._try_search(article, shop_code, st_num, ct_num)
                     if product:
                         return product
                 except (ValueError, TypeError):
                     pass
             
+            # Перебираем все комбинации
             for st, ct in VALID_SERVICE_PAIRS:
-                logger.info(f"  → Пробую {shop_code} с storeType={st}, catalogType={ct}")
+                logger.info(f"    → Пробую {shop_code} с storeType={st}, catalogType={ct}")
                 product = await self._try_search(article, shop_code, st, ct)
                 if product:
                     return product
             
-            logger.warning(f"  ❌ Товар {article} не найден в магазине {shop_code}")
-            return None
-
+            logger.warning(f"  ⚠️ Не нашёл в магазине {shop_code}, пробую без shopCode...")
+        
+        # Шаг 2: Пробуем БЕЗ shopCode — перебираем fallback-магазины
+        logger.info(f"  → Шаг 2: Перебираю {len(FALLBACK_STORES)} fallback-магазинов")
         codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
-        logger.info(f"  → Перебираю {len(codes_to_try)} fallback-магазинов")
+        
         for code in codes_to_try:
             for st, ct in VALID_SERVICE_PAIRS:
                 product = await self._try_search(article, code, st, ct)
                 if product:
                     return product
             await asyncio.sleep(0.1)
-
-        logger.warning(f"  ❌ Товар {article} не найден ни в одном магазине")
+        
+        # Шаг 3: Пробуем БЕЗ shopCode вообще (если API поддерживает)
+        logger.info(f"  → Шаг 3: Пробую поиск БЕЗ shopCode")
+        for st, ct in VALID_SERVICE_PAIRS:
+            product = await self._try_search_without_store(article, st, ct)
+            if product:
+                return product
+        
+        logger.warning(f"  ❌ Товар {article} не найден нигде")
         return None
 
     async def _try_search(
@@ -136,7 +149,7 @@ class MagnitAPI:
             )
 
             if response.status_code != 200:
-                logger.debug(f"  ⚠️ HTTP {response.status_code} от {store_code}")
+                logger.debug(f"    ⚠️ HTTP {response.status_code} от {store_code}")
                 return None
 
             data = response.json()
@@ -164,7 +177,59 @@ class MagnitAPI:
                 catalog_type_name="🏪 В магазине"
             )
         except Exception as e:
-            logger.error(f"  ❌ Ошибка {store_code}: {e}")
+            logger.error(f"    ❌ Ошибка {store_code}: {e}")
+            return None
+
+    async def _try_search_without_store(
+        self,
+        article: str,
+        store_type,
+        catalog_type
+    ) -> Optional[Product]:
+        """Поиск БЕЗ shopCode — только по артикулу"""
+        payload = {
+            "term": article,
+            "storeType": store_type,
+            "catalogType": catalog_type,
+            "includeAdultGoods": True,
+            "pagination": {"offset": 0, "limit": 36},
+            "sort": {"order": "desc", "type": "popularity"}
+        }
+
+        try:
+            response = self.scraper.post(
+                self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
+            )
+
+            if response.status_code != 200:
+                return None
+
+            data = response.json()
+            if not data.get("isSearchByArticle"):
+                return None
+
+            items = data.get("items", [])
+            if not items:
+                return None
+
+            item = items[0]
+            logger.info(f"✅ Найден БЕЗ shopCode (storeType={store_type}, catalogType={catalog_type}): {item.get('name', '')}")
+
+            return Product(
+                id=item.get("id") or item.get("productId"),
+                name=item.get("name", "Без названия"),
+                price=item.get("price", 0) / 100,
+                quantity=item.get("quantity", 0),
+                store_code=item.get("storeCode", "unknown"),
+                image_url=self._get_image_url(item),
+                rating=item.get("ratings", {}).get("rating", 0),
+                is_adult=item.get("isForAdults", False),
+                seo_code=item.get("seoCode", ""),
+                catalog_type=str(catalog_type),
+                catalog_type_name="🏪 В магазине"
+            )
+        except Exception as e:
+            logger.error(f"    ❌ Ошибка поиска без shopCode: {e}")
             return None
 
     def _get_image_url(self, item: dict) -> str:
