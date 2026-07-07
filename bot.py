@@ -29,7 +29,7 @@ bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
-ADMIN_ID = 123456789
+ADMIN_ID = 516400446
 
 
 class ScanStates(StatesGroup):
