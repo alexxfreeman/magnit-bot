@@ -13,8 +13,7 @@ from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 logger = logging.getLogger(__name__)
 geolocator = Nominatim(user_agent="magnit_bot_v1", timeout=10)
 
-# Небольшой список магазинов из разных регионов — только для проверки наличия
-# когда нужен shopCode. Не полный, просто для подстраховки.
+# Небольшой список магазинов из разных регионов — только для fallback
 FALLBACK_STORES = [
     "760001",  # Москва
     "764574",  # СПб
@@ -22,7 +21,7 @@ FALLBACK_STORES = [
     "947604",  # Урал
     "764602",  # Сибирь
     "760004",  # Поволжье
-    "323593",  # из вашего файла
+    "323593",  # из файла
 ]
 
 
@@ -46,9 +45,13 @@ class Product:
 
     @property
     def url(self) -> str:
-        if self.seo_code:
-            return f"https://magnit.ru/catalog/{self.seo_code}/"
-        return f"https://magnit.ru/product/{self.id}"
+        """Формирует ссылку на товар в конкретном магазине"""
+        if self.seo_code and self.store_code and self.store_code != "web":
+            return f"https://magnit.ru/product/{self.id}-{self.seo_code}?shopCode={self.store_code}&shopType=1"
+        elif self.store_code and self.store_code != "web":
+            return f"https://magnit.ru/product/{self.id}?shopCode={self.store_code}&shopType=1"
+        else:
+            return f"https://magnit.ru/product/{self.id}"
 
 
 class MagnitAPI:
@@ -75,29 +78,42 @@ class MagnitAPI:
         store_type=None,
         catalog_type=None
     ) -> Optional[Product]:
-        logger.info(f"🔍 Поиск товара {article}")
+        logger.info(f"🔍 Поиск товара {article} (shop_code={shop_code})")
 
         # === СТРАТЕГИЯ 1: Парсинг HTML страницы товара ===
         logger.info("  → Стратегия 1: Парсинг HTML страницы")
         product = await self._parse_product_page(article)
         if product:
+            # Если указан shopCode, подставляем его в product
+            if shop_code:
+                product.store_code = shop_code
             return product
 
-        # === СТРАТЕГИЯ 2: API поиск (fallback) ===
-        logger.info("  → Стратегия 2: API поиск")
+        # === СТРАТЕГИЯ 2: API поиск с shopCode ===
         if shop_code:
-            product = await self._try_search_api(article, shop_code)
+            logger.info(f"  → Стратегия 2: API поиск с shopCode={shop_code}")
+            product = await self._try_search(article, shop_code, 1, 1)
             if product:
                 return product
 
+        # === СТРАТЕГИЯ 3: Перебор fallback-магазинов ===
+        logger.info(f"  → Стратегия 3: Перебор {len(FALLBACK_STORES)} fallback-магазинов")
         for code in FALLBACK_STORES:
-            product = await self._try_search_api(article, code)
+            product = await self._try_search(article, code, 1, 1)
             if product:
                 return product
             await asyncio.sleep(0.1)
 
         logger.warning(f"  ❌ Товар {article} не найден")
         return None
+
+    async def search_product_in_store(
+        self,
+        article: str,
+        store_code: str
+    ) -> Optional[Product]:
+        """Быстрый поиск товара в конкретном магазине (для проверки по геолокации)"""
+        return await self._try_search(article, store_code, 1, 1)
 
     async def _parse_product_page(self, article: str) -> Optional[Product]:
         """Парсит HTML страницу товара — самый надёжный способ"""
@@ -115,7 +131,7 @@ class MagnitAPI:
 
                 html = response.text
 
-                # Способ 1: Ищем JSON в теге <script id="__NEXT_DATA__">
+                # Способ 1: JSON в теге <script id="__NEXT_DATA__">
                 match = re.search(
                     r'<script\s+id="__NEXT_DATA__"\s+type="application/json">(.*?)</script>',
                     html,
@@ -131,7 +147,7 @@ class MagnitAPI:
                     except json.JSONDecodeError:
                         pass
 
-                # Способ 2: Ищем JSON в window.__INITIAL_STATE__ или похожих
+                # Способ 2: JSON в window.__INITIAL_STATE__
                 match = re.search(r'window\.__[A-Z_]+__\s*=\s*({.*?});', html, re.DOTALL)
                 if match:
                     try:
@@ -143,7 +159,7 @@ class MagnitAPI:
                     except json.JSONDecodeError:
                         pass
 
-                # Способ 3: Ищем JSON-LD (schema.org)
+                # Способ 3: JSON-LD (schema.org)
                 match = re.search(
                     r'<script\s+type="application/ld\+json">(.*?)</script>',
                     html,
@@ -159,7 +175,7 @@ class MagnitAPI:
                     except json.JSONDecodeError:
                         pass
 
-                # Способ 4: Парсим meta-теги (последний шанс)
+                # Способ 4: Meta-теги (последний шанс)
                 product = self._extract_from_meta_tags(html, article)
                 if product:
                     logger.info(f"✅ Найден через meta-теги: {product.name}")
@@ -174,24 +190,17 @@ class MagnitAPI:
     def _extract_from_next_data(self, data: dict, article: str) -> Optional[Product]:
         """Извлекает товар из __NEXT_DATA__"""
         try:
-            # Ищем товар в props.pageProps
             page_props = data.get("props", {}).get("pageProps", {})
-            
-            # Пробуем разные пути
             item = (
                 page_props.get("product") or
                 page_props.get("item") or
                 page_props.get("data", {}).get("product") or
                 page_props.get("initialState", {}).get("product", {}).get("current")
             )
-            
             if not item:
-                # Ищем рекурсивно
                 item = self._find_product_recursive(page_props)
-            
             if not item or not isinstance(item, dict):
                 return None
-
             return self._product_from_dict(item, article)
         except Exception as e:
             logger.debug(f"  ⚠️ Ошибка извлечения из NEXT_DATA: {e}")
@@ -239,7 +248,7 @@ class MagnitAPI:
         return None
 
     def _extract_from_meta_tags(self, html: str, article: str) -> Optional[Product]:
-        """Извлекает данные из meta-тегов (og:title, og:image и т.д.)"""
+        """Извлекает данные из meta-тегов"""
         try:
             title_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
             image_match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html)
@@ -247,6 +256,12 @@ class MagnitAPI:
 
             if title_match:
                 name = title_match.group(1)
+                # Очищаем название от мусора
+                for separator in [' – ', ' - ', ' | ', '—', ' – купить']:
+                    if separator in name:
+                        name = name.split(separator)[0].strip()
+                        break
+
                 image = image_match.group(1) if image_match else ""
                 price = float(price_match.group(1)) if price_match else 0
 
@@ -262,21 +277,18 @@ class MagnitAPI:
                     seo_code="",
                 )
         except Exception as e:
-            logger.debug(f"  ⚠️ Ошибка извлечения из meta: {e}")
+            logger.debug(f"⚠️ Ошибка извлечения из meta: {e}")
         return None
 
     def _find_product_recursive(self, data, depth=0) -> Optional[dict]:
         """Рекурсивно ищет объект товара в структуре данных"""
         if depth > 10:
             return None
-        
         if isinstance(data, dict):
-            # Проверяем, похож ли этот dict на товар
             if "id" in data and "name" in data and "price" in data:
                 return data
             if "productId" in data and "name" in data:
                 return data
-            # Рекурсивно ищем в значениях
             for value in data.values():
                 result = self._find_product_recursive(value, depth + 1)
                 if result:
@@ -294,7 +306,6 @@ class MagnitAPI:
             price_raw = item.get("price", 0)
             if isinstance(price_raw, str):
                 price_raw = float(price_raw.replace(",", "."))
-            # Если цена в копейках (> 100000), делим на 100
             if price_raw > 100000:
                 price_raw = price_raw / 100
 
@@ -313,37 +324,59 @@ class MagnitAPI:
             logger.error(f"  ❌ Ошибка создания Product: {e}")
             return None
 
-    async def _try_search_api(self, article: str, store_code: str) -> Optional[Product]:
-        """Резервный поиск через API"""
-        for store_type, catalog_type in [(1, 1), (1, 3), ("MM", "1")]:
-            payload = {
-                "term": article,
-                "storeCode": store_code,
-                "storeType": store_type,
-                "catalogType": catalog_type,
-                "includeAdultGoods": True,
-                "pagination": {"offset": 0, "limit": 36},
-                "sort": {"order": "desc", "type": "popularity"}
-            }
-            try:
-                response = self.scraper.post(
-                    self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
-                )
-                if response.status_code != 200:
-                    continue
-                data = response.json()
-                if not data.get("isSearchByArticle"):
-                    continue
-                items = data.get("items", [])
-                if not items:
-                    continue
-                item = items[0]
-                logger.info(f"✅ Найден через API в {store_code}: {item.get('name', '')}")
-                return self._product_from_dict(item, article)
-            except Exception as e:
-                logger.debug(f"  ⚠️ API ошибка {store_code}: {e}")
-                continue
-        return None
+    async def _try_search(
+        self,
+        article: str,
+        store_code: str,
+        store_type,
+        catalog_type
+    ) -> Optional[Product]:
+        """Поиск через API"""
+        payload = {
+            "term": article,
+            "storeCode": store_code,
+            "storeType": store_type,
+            "catalogType": catalog_type,
+            "includeAdultGoods": True,
+            "pagination": {"offset": 0, "limit": 36},
+            "sort": {"order": "desc", "type": "popularity"}
+        }
+
+        try:
+            response = self.scraper.post(
+                self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
+            )
+
+            if response.status_code != 200:
+                return None
+
+            data = response.json()
+            if not data.get("isSearchByArticle"):
+                return None
+
+            items = data.get("items", [])
+            if not items:
+                return None
+
+            item = items[0]
+            logger.info(f"✅ Найден через API в {store_code}: {item.get('name', '')}")
+
+            return Product(
+                id=item.get("id") or item.get("productId"),
+                name=item.get("name", "Без названия"),
+                price=item.get("price", 0) / 100,
+                quantity=item.get("quantity", 0),
+                store_code=item.get("storeCode", store_code),
+                image_url=self._get_image_url(item),
+                rating=item.get("ratings", {}).get("rating", 0),
+                is_adult=item.get("isForAdults", False),
+                seo_code=item.get("seoCode", ""),
+                catalog_type=str(catalog_type),
+                catalog_type_name="🏪 В магазине"
+            )
+        except Exception as e:
+            logger.error(f"  ❌ Ошибка {store_code}: {e}")
+            return None
 
     def _get_image_url(self, item: dict) -> str:
         gallery = item.get("gallery", [])
