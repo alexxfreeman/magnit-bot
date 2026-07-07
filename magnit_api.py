@@ -6,9 +6,10 @@ from typing import List, Optional
 from dataclasses import dataclass
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
 logger = logging.getLogger(__name__)
-geolocator = Nominatim(user_agent="magnit_bot_v1")
+geolocator = Nominatim(user_agent="magnit_bot_v1", timeout=10)  # Увеличили таймаут до 10 сек
 
 FALLBACK_STORES = [
     "760001", "494318", "219282",
@@ -20,10 +21,9 @@ FALLBACK_STORES = [
     "937695", "388641", "760151", "453594", "764525",
 ]
 
-# Рабочие комбинации storeType + catalogType (перебираем по порядку)
 VALID_SERVICE_PAIRS = [
-    ("express", "3"),      # Работало изначально
-    ("express", "1"),      # Из вашей ссылки
+    ("express", "3"),
+    ("express", "1"),
     ("supermarket", "1"),
     ("delivery", "2"),
     ("pickup", "3"),
@@ -78,28 +78,34 @@ class MagnitAPI:
         store_type: str = None,
         catalog_type: str = None
     ) -> Optional[Product]:
+        logger.info(f"🔍 Поиск товара {article} (shop_code={shop_code}, store_type={store_type}, catalog_type={catalog_type})")
+        
         if shop_code:
             # Если указаны конкретные store_type и catalog_type — пробуем их первыми
             if store_type and catalog_type:
+                logger.info(f"  → Пробую {shop_code} с {store_type}/{catalog_type}")
                 product = await self._try_search(article, shop_code, store_type, catalog_type)
                 if product:
                     return product
             # Потом перебираем все рабочие комбинации
             for st, ct in VALID_SERVICE_PAIRS:
+                logger.info(f"  → Пробую {shop_code} с {st}/{ct}")
                 product = await self._try_search(article, shop_code, st, ct)
                 if product:
                     return product
+            logger.warning(f"  ❌ Товар {article} не найден в магазине {shop_code}")
             return None
 
         # Перебор fallback-магазинов
         codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
+        logger.info(f"  → Перебираю {len(codes_to_try)} fallback-магазинов")
         for code in codes_to_try:
-            # Пробуем первую рабочую комбинацию
             product = await self._try_search(article, code, "express", "3")
             if product:
                 return product
             await asyncio.sleep(0.1)
 
+        logger.warning(f"  ❌ Товар {article} не найден ни в одном fallback-магазине")
         return None
 
     async def _try_search(
@@ -125,6 +131,7 @@ class MagnitAPI:
             )
 
             if response.status_code != 200:
+                logger.debug(f"  ⚠️ HTTP {response.status_code} от {store_code}")
                 return None
 
             data = response.json()
@@ -152,7 +159,7 @@ class MagnitAPI:
                 catalog_type_name="🏪 В магазине"
             )
         except Exception as e:
-            logger.error(f"Ошибка {store_code}: {e}")
+            logger.error(f"  ❌ Ошибка {store_code}: {e}")
             return None
 
     def _get_image_url(self, item: dict) -> str:
@@ -219,12 +226,15 @@ class MagnitAPI:
 
 
 def get_address_from_coordinates(lat: float, lon: float) -> str:
+    """Получает адрес по координатам с обработкой таймаутов"""
     try:
-        location = geolocator.reverse(f"{lat}, {lon}", language="ru", timeout=5)
+        location = geolocator.reverse(f"{lat}, {lon}", language="ru", exactly_one=True)
         if location and location.address:
             return ", ".join(location.address.split(",")[0:3])
+    except (GeocoderTimedOut, GeocoderServiceError) as e:
+        logger.warning(f"⏱️ Таймаут получения адреса для ({lat:.4f}, {lon:.4f}): {e}")
     except Exception as e:
-        logger.error(f"Ошибка получения адреса: {e}")
+        logger.warning(f"⚠️ Ошибка получения адреса: {e}")
     return f"Координаты: {lat:.4f}, {lon:.4f}"
 
 
