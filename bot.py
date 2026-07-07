@@ -254,11 +254,11 @@ async def handle_article(message: Message):
     catalog_type_int = int(catalog_type) if catalog_type and catalog_type.isdigit() else 1
 
     product = await magnit_api.search_product(
-        article,
-        shop_code=shop_code,
-        store_type=1,
-        catalog_type=catalog_type_int
-    )
+    article,
+    shop_code=shop_code,
+    store_type="MM",  # Строка вместо числа
+    catalog_type=catalog_type_int
+)
 
     if not product:
         await message.answer(
