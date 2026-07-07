@@ -143,25 +143,18 @@ async def process_location(message: Message, state: FSMContext):
     )
 
     results = []
-    checked_count = 0
 
-    for i, store in enumerate(stores_to_check, 1):
+    async def check_store(store):
         store_code = store["code"]
         try:
-            product = await magnit_api.search_product(
-                article,
-                shop_code=store_code,
-                store_type=1,
-                catalog_type=1
-            )
-            checked_count += 1
+            product = await magnit_api.search_product_in_store(article, store_code)
             if product:
                 address = ""
                 if product.in_stock:
                     address = get_address_from_coordinates(
                         store["latitude"], store["longitude"]
                     )
-                results.append({
+                return {
                     "store_code": store_code,
                     "store_name": f"Магнит #{store_code}",
                     "store_address": address if address else f"~{store['distance']:.1f} км",
@@ -170,14 +163,24 @@ async def process_location(message: Message, state: FSMContext):
                     "quantity": product.quantity,
                     "in_stock": product.in_stock,
                     "url": product.url,
-                })
+                }
         except Exception as e:
             logger.error(f"Ошибка магазина {store_code}: {e}")
-            continue
+        return None
 
-        if i % 10 == 0:
-            await message.answer(f"⏳ Проверено {i}/{len(stores_to_check)} магазинов...")
-        await asyncio.sleep(0.1)
+    # Параллельная проверка по 5 магазинов
+    for i in range(0, len(stores_to_check), 5):
+        batch = stores_to_check[i:i+5]
+        batch_results = await asyncio.gather(*[check_store(store) for store in batch])
+        for result in batch_results:
+            if result:
+                results.append(result)
+
+        progress = min(i + 5, len(stores_to_check))
+        if progress % 10 == 0 or progress == len(stores_to_check):
+            await message.answer(f"⏳ Проверено {progress}/{len(stores_to_check)} магазинов...")
+
+        await asyncio.sleep(0.2)
 
     if not results:
         await message.answer("❌ Товар не найден ни в одном магазине.")
@@ -190,8 +193,8 @@ async def process_location(message: Message, state: FSMContext):
 
     text = f"📊 <b>Результаты проверки артикула {article}</b>\n\n"
     text += f"🏪 Запрошено магазинов: {len(stores_to_check)}\n"
-    text += f"🔍 Успешно проверено: {checked_count}\n"
-    text += f"✅ В наличии в <b>{len(in_stock)}</b> магазинах\n\n"
+    text += f"✅ Найдено товаров: {len(results)}\n"
+    text += f"🟢 В наличии в <b>{len(in_stock)}</b> магазинах\n\n"
 
     if in_stock:
         text += f"<b>Топ-{min(10, len(in_stock))} по цене:</b>\n\n"
@@ -280,7 +283,7 @@ async def handle_article(message: Message):
         f"🔗 <a href='{product.url}'>Открыть в Магните</a>"
     )
 
-    # Проверяем, что URL картинки корректный
+    # Проверяем URL картинки перед отправкой
     if product.image_url and product.image_url.startswith(('http://', 'https://')):
         try:
             await message.answer_photo(
