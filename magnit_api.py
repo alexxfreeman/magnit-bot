@@ -89,29 +89,13 @@ class MagnitAPI:
             logger.info(f"  ✅ Цена в магазине {shop_code}: {api_product.price}₽, наличие: {api_product.quantity}")
             return base_product
 
-        # Fallback: пробуем HTML с shopCode
-        logger.info(f"  → API не сработал для {shop_code}, пробуем HTML с shopCode")
-        html_product = await self._parse_product_page_with_shop(article, shop_code)
-        if html_product and html_product.price > 0:
-            base_product.price = html_product.price
-            base_product.quantity = html_product.quantity
-            base_product.store_code = shop_code
-            logger.info(f"  ✅ Цена из HTML для {shop_code}: {html_product.price}₽")
-            return base_product
-
-        logger.warning(f"  ⚠️ Не удалось получить цену для {shop_code}")
+        logger.warning(f"  ⚠️ API не вернул цену для {shop_code}")
         base_product.store_code = shop_code
         return base_product
 
     async def search_product_in_store(self, article: str, store_code: str) -> Optional[Product]:
-        """API + HTML fallback для конкретного магазина"""
-        # Сначала пробуем API
-        product = await self._search_via_api(article, store_code)
-        if product:
-            return product
-
-        # Fallback: HTML с shopCode
-        return await self._parse_product_page_with_shop(article, store_code)
+        """ТОЛЬКО API для проверки в конкретном магазине"""
+        return await self._search_via_api(article, store_code)
 
     async def _search_via_api(self, article: str, store_code: str) -> Optional[Product]:
         """Поиск товара через API"""
@@ -162,153 +146,6 @@ class MagnitAPI:
                 logger.debug(f"⚠️ API ошибка {store_code}: {e}")
                 continue
 
-        return None
-
-    async def _parse_product_page_with_shop(self, article: str, shop_code: str) -> Optional[Product]:
-        """Парсит HTML страницу товара с shopCode — для получения цены в конкретном магазине"""
-        urls = [
-            f"https://magnit.ru/product/{article}?shopCode={shop_code}&shopType=1",
-            f"https://magnit.ru/product/{article}/?shopCode={shop_code}&shopType=1",
-        ]
-        for url in urls:
-            try:
-                resp = self.scraper.get(url, headers=self.html_headers, timeout=10)
-                if resp.status_code != 200:
-                    continue
-                html = resp.text
-
-                # Ищем __NEXT_DATA__ с ценами
-                match = re.search(
-                    r'<script\s+id="__NEXT_DATA__"\s+type="application/json">(.*?)</script>',
-                    html, re.DOTALL
-                )
-                if match:
-                    try:
-                        data = json.loads(match.group(1))
-                        pp = data.get("props", {}).get("pageProps", {})
-                        item = pp.get("product") or pp.get("item") or self._find_recursive(pp)
-                        if item and isinstance(item, dict):
-                            # Ищем цену в разных местах
-                            price = self._extract_price_from_item(item, shop_code)
-                            if price and price > 0:
-                                quantity = self._extract_quantity_from_item(item, shop_code)
-                                name = item.get("name", "Без названия")
-                                logger.info(f"✅ HTML: {shop_code}: {name} — {price}₽")
-                                return Product(
-                                    id=article,
-                                    name=name,
-                                    price=price,
-                                    quantity=quantity,
-                                    store_code=shop_code,
-                                    image_url=self._get_image_url(item),
-                                    rating=0,
-                                    is_adult=False,
-                                    seo_code=item.get("seoCode", "")
-                                )
-                    except Exception as e:
-                        logger.debug(f"⚠️ HTML parse error: {e}")
-
-                # Fallback: ищем цену в meta-тегах или в тексте
-                price_match = re.search(r'"price"\s*:\s*"?([\d.]+)"?', html)
-                title_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
-                if price_match and title_match:
-                    price = float(price_match.group(1))
-                    if price > 100000:
-                        price = price / 100
-                    name = title_match.group(1)
-                    for sep in [' – ', ' - ', ' | ', '—']:
-                        if sep in name:
-                            name = name.split(sep)[0].strip()
-                            break
-                    logger.info(f"✅ HTML meta: {shop_code}: {name} — {price}₽")
-                    return Product(
-                        id=article,
-                        name=name,
-                        price=price,
-                        quantity=1,
-                        store_code=shop_code,
-                        image_url="",
-                        rating=0,
-                        is_adult=False,
-                        seo_code=""
-                    )
-            except Exception as e:
-                logger.debug(f"⚠️ HTML error {shop_code}: {e}")
-                continue
-        return None
-
-    def _extract_price_from_item(self, item: dict, shop_code: str) -> Optional[float]:
-        """Извлекает цену из структуры данных товара"""
-        # Прямое поле price
-        price = item.get("price")
-        if price:
-            if isinstance(price, (int, float)):
-                return price / 100 if price > 100000 else price
-            if isinstance(price, str):
-                try:
-                    p = float(price.replace(",", "."))
-                    return p / 100 if p > 100000 else p
-                except:
-                    pass
-
-        # Поле prices с разными типами
-        prices = item.get("prices", {})
-        if isinstance(prices, dict):
-            # Ищем shopPrice, currentPrice, price
-            for key in ["shopPrice", "currentPrice", "price", "regularPrice"]:
-                if key in prices:
-                    p = prices[key]
-                    if isinstance(p, (int, float)):
-                        return p / 100 if p > 100000 else p
-                    if isinstance(p, dict):
-                        val = p.get("value") or p.get("amount")
-                        if val:
-                            return val / 100 if val > 100000 else val
-
-        # Поле offers (JSON-LD формат)
-        offers = item.get("offers", {})
-        if isinstance(offers, dict):
-            p = offers.get("price")
-            if p:
-                return float(p)
-        elif isinstance(offers, list) and offers:
-            p = offers[0].get("price")
-            if p:
-                return float(p)
-
-        # Рекурсивный поиск
-        return self._find_price_recursive(item)
-
-    def _extract_quantity_from_item(self, item: dict, shop_code: str) -> int:
-        """Извлекает количество товара"""
-        qty = item.get("quantity") or item.get("stock") or item.get("inStock")
-        if isinstance(qty, (int, float)):
-            return int(qty)
-        if isinstance(qty, dict):
-            return int(qty.get("value", 0))
-        return 0
-
-    def _find_price_recursive(self, data, d=0) -> Optional[float]:
-        """Рекурсивно ищет цену в структуре данных"""
-        if d > 8:
-            return None
-        if isinstance(data, dict):
-            # Проверяем ключи с ценой
-            for key in ["price", "shopPrice", "currentPrice", "value", "amount"]:
-                if key in data:
-                    val = data[key]
-                    if isinstance(val, (int, float)) and val > 0:
-                        return val / 100 if val > 100000 else val
-            # Рекурсия
-            for v in data.values():
-                r = self._find_price_recursive(v, d + 1)
-                if r:
-                    return r
-        elif isinstance(data, list):
-            for i in data:
-                r = self._find_price_recursive(i, d + 1)
-                if r:
-                    return r
         return None
 
     async def _parse_product_page(self, article: str) -> Optional[Product]:
