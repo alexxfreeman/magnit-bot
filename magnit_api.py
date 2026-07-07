@@ -99,50 +99,67 @@ class MagnitAPI:
         return await self._search_via_api(article, store_code)
 
     async def _search_via_api(self, article: str, store_code: str) -> Optional[Product]:
-        """Быстрый запрос цены через API (максимум 2 попытки)"""
-        for store_type, catalog_type in API_PAIRS:
-            payload = {
-                "term": article,
-                "storeCode": store_code,
-                "storeType": store_type,
-                "catalogType": catalog_type,
-                "includeAdultGoods": True,
-                "pagination": {"offset": 0, "limit": 36},
-                "sort": {"order": "desc", "type": "popularity"}
-            }
+    """Поиск товара через API с перебором числовых storeType/catalogType"""
+    # Числовые комбинации (как в URL: shopType=1, catalogType=1)
+    combinations = [
+        (1, 1),  # Как в ссылке пользователя
+        (1, 3),
+        (2, 2),
+        (3, 3),
+        ("express", "3"),  # Строковые (на случай если работают)
+        ("express", "1"),
+    ]
+    
+    for store_type, catalog_type in combinations:
+        payload = {
+            "term": article,
+            "storeCode": store_code,
+            "storeType": store_type,
+            "catalogType": catalog_type,
+            "includeAdultGoods": True,
+            "pagination": {"offset": 0, "limit": 36},
+            "sort": {"order": "desc", "type": "popularity"}
+        }
 
-            try:
-                response = self.scraper.post(
-                    self.SEARCH_URL, json=payload, headers=self.api_headers, timeout=8
-                )
-                if response.status_code != 200:
-                    continue
-
-                data = response.json()
-                if not data.get("isSearchByArticle"):
-                    continue
-
-                items = data.get("items", [])
-                if not items:
-                    continue
-
-                item = items[0]
-                return Product(
-                    id=str(item.get("id") or item.get("productId") or article),
-                    name=item.get("name", ""),
-                    price=item.get("price", 0) / 100,
-                    quantity=item.get("quantity", 0),
-                    store_code=item.get("storeCode", store_code),
-                    image_url=self._get_image_url(item),
-                    rating=item.get("ratings", {}).get("rating", 0) if isinstance(item.get("ratings"), dict) else 0,
-                    is_adult=item.get("isForAdults", False),
-                    seo_code=item.get("seoCode", ""),
-                    catalog_type=str(catalog_type),
-                    catalog_type_name="🏪 В магазине"
-                )
-            except Exception:
+        try:
+            response = self.scraper.post(
+                self.SEARCH_URL, json=payload, headers=self.api_headers, timeout=8
+            )
+            
+            if response.status_code != 200:
+                logger.debug(f"⚠️ HTTP {response.status_code} для {store_code} (st={store_type}, ct={catalog_type})")
                 continue
-        return None
+
+            data = response.json()
+            if not data.get("isSearchByArticle"):
+                continue
+
+            items = data.get("items", [])
+            if not items:
+                continue
+
+            item = items[0]
+            logger.info(f"✅ {store_code} (st={store_type}, ct={catalog_type}): {item.get('name', '')}")
+            
+            return Product(
+                id=str(item.get("id") or item.get("productId") or article),
+                name=item.get("name", ""),
+                price=item.get("price", 0) / 100,
+                quantity=item.get("quantity", 0),
+                store_code=item.get("storeCode", store_code),
+                image_url=self._get_image_url(item),
+                rating=item.get("ratings", {}).get("rating", 0) if isinstance(item.get("ratings"), dict) else 0,
+                is_adult=item.get("isForAdults", False),
+                seo_code=item.get("seoCode", ""),
+                catalog_type=str(catalog_type),
+                catalog_type_name="🏪 В магазине"
+            )
+        except Exception as e:
+            logger.debug(f"⚠️ Ошибка {store_code} (st={store_type}, ct={catalog_type}): {e}")
+            continue
+    
+    logger.warning(f"❌ {store_code}: ни одна комбинация не сработала")
+    return None
 
     async def _parse_product_page(self, article: str) -> Optional[Product]:
         """Парсит HTML ТОЛЬКО для получения названия, картинки и seo_code"""
