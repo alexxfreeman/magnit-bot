@@ -280,8 +280,17 @@ async def handle_article(message: Message):
         f"🔗 <a href='{product.url}'>Открыть в Магните</a>"
     )
 
-    if product.image_url:
-        await message.answer_photo(photo=product.image_url, caption=text, parse_mode="HTML")
+    # Проверяем, что URL картинки корректный
+    if product.image_url and product.image_url.startswith(('http://', 'https://')):
+        try:
+            await message.answer_photo(
+                photo=product.image_url,
+                caption=text,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось отправить фото: {e}")
+            await message.answer(text, parse_mode="HTML")
     else:
         await message.answer(text, parse_mode="HTML")
 
