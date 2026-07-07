@@ -9,7 +9,7 @@ from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
 logger = logging.getLogger(__name__)
-geolocator = Nominatim(user_agent="magnit_bot_v1", timeout=10)  # Увеличили таймаут до 10 сек
+geolocator = Nominatim(user_agent="magnit_bot_v1", timeout=10)
 
 FALLBACK_STORES = [
     "760001", "494318", "219282",
@@ -19,14 +19,14 @@ FALLBACK_STORES = [
     "947604", "760078",
     "764657", "720146",
     "937695", "388641", "760151", "453594", "764525",
+    "323593",
 ]
 
 VALID_SERVICE_PAIRS = [
-    ("express", "3"),
-    ("express", "1"),
-    ("supermarket", "1"),
-    ("delivery", "2"),
-    ("pickup", "3"),
+    (1, 1),
+    (1, 3),
+    (2, 2),
+    (3, 3),
 ]
 
 
@@ -75,45 +75,50 @@ class MagnitAPI:
         self,
         article: str,
         shop_code: str = None,
-        store_type: str = None,
-        catalog_type: str = None
+        store_type = None,
+        catalog_type = None
     ) -> Optional[Product]:
         logger.info(f"🔍 Поиск товара {article} (shop_code={shop_code}, store_type={store_type}, catalog_type={catalog_type})")
         
         if shop_code:
-            # Если указаны конкретные store_type и catalog_type — пробуем их первыми
-            if store_type and catalog_type:
-                logger.info(f"  → Пробую {shop_code} с {store_type}/{catalog_type}")
-                product = await self._try_search(article, shop_code, store_type, catalog_type)
-                if product:
-                    return product
-            # Потом перебираем все рабочие комбинации
+            if store_type is not None and catalog_type is not None:
+                try:
+                    st_num = int(store_type)
+                    ct_num = int(catalog_type)
+                    logger.info(f"  → Пробую {shop_code} с storeType={st_num}, catalogType={ct_num}")
+                    product = await self._try_search(article, shop_code, st_num, ct_num)
+                    if product:
+                        return product
+                except (ValueError, TypeError):
+                    pass
+            
             for st, ct in VALID_SERVICE_PAIRS:
-                logger.info(f"  → Пробую {shop_code} с {st}/{ct}")
+                logger.info(f"  → Пробую {shop_code} с storeType={st}, catalogType={ct}")
                 product = await self._try_search(article, shop_code, st, ct)
                 if product:
                     return product
+            
             logger.warning(f"  ❌ Товар {article} не найден в магазине {shop_code}")
             return None
 
-        # Перебор fallback-магазинов
         codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
         logger.info(f"  → Перебираю {len(codes_to_try)} fallback-магазинов")
         for code in codes_to_try:
-            product = await self._try_search(article, code, "express", "3")
-            if product:
-                return product
+            for st, ct in VALID_SERVICE_PAIRS:
+                product = await self._try_search(article, code, st, ct)
+                if product:
+                    return product
             await asyncio.sleep(0.1)
 
-        logger.warning(f"  ❌ Товар {article} не найден ни в одном fallback-магазине")
+        logger.warning(f"  ❌ Товар {article} не найден ни в одном магазине")
         return None
 
     async def _try_search(
         self,
         article: str,
         store_code: str,
-        store_type: str,
-        catalog_type: str
+        store_type,
+        catalog_type
     ) -> Optional[Product]:
         payload = {
             "term": article,
@@ -155,7 +160,7 @@ class MagnitAPI:
                 rating=item.get("ratings", {}).get("rating", 0),
                 is_adult=item.get("isForAdults", False),
                 seo_code=item.get("seoCode", ""),
-                catalog_type=catalog_type,
+                catalog_type=str(catalog_type),
                 catalog_type_name="🏪 В магазине"
             )
         except Exception as e:
@@ -226,13 +231,12 @@ class MagnitAPI:
 
 
 def get_address_from_coordinates(lat: float, lon: float) -> str:
-    """Получает адрес по координатам с обработкой таймаутов"""
     try:
         location = geolocator.reverse(f"{lat}, {lon}", language="ru", exactly_one=True)
         if location and location.address:
             return ", ".join(location.address.split(",")[0:3])
     except (GeocoderTimedOut, GeocoderServiceError) as e:
-        logger.warning(f"⏱️ Таймаут получения адреса для ({lat:.4f}, {lon:.4f}): {e}")
+        logger.warning(f"⏱️ Таймаут получения адреса для ({lat:.4f}, {lon:.4f})")
     except Exception as e:
         logger.warning(f"⚠️ Ошибка получения адреса: {e}")
     return f"Координаты: {lat:.4f}, {lon:.4f}"
