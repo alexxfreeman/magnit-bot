@@ -127,7 +127,7 @@ async def process_location(message: Message, state: FSMContext):
 
     await message.answer(
         f"🔍 Ищу магазины рядом...\n"
-        f"📍 Координаты: {lat:.4f}, {lon:.4f}\n"
+        f" Координаты: {lat:.4f}, {lon:.4f}\n"
         f"📦 Артикул: {article}",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -198,10 +198,10 @@ async def process_location(message: Message, state: FSMContext):
 
     for i, result in enumerate(top_10, 1):
         if result["in_stock"]:
-            text += f"{i}.  <b>{result['store_name']}</b>\n"
+            text += f"{i}. 🏪 <b>{result['store_name']}</b>\n"
             text += f"   💰 Цена: <b>{result['price']:.2f} ₽</b>\n"
             text += f"   📦 В наличии: {result['quantity']} шт.\n"
-            text += f"    {result['store_address']}\n"
+            text += f"   📍 {result['store_address']}\n"
             text += f"   📏 Расстояние: {result['distance']:.1f} км\n"
             text += f"   🔗 <a href='{result['url']}'>Открыть в Магните</a>\n\n"
         else:
@@ -254,7 +254,6 @@ async def handle_article(message: Message):
     info_text += "..."
     await message.answer(info_text)
 
-    # catalog_type — СТРОКА, не число!
     catalog_type_str = catalog_type if catalog_type else "1"
 
     product = await magnit_api.search_product(
@@ -392,10 +391,10 @@ async def cmd_user(message: Message):
     username = f"@{user['username']}" if user['username'] else 'нет'
     text = (
         f" <b>Информация о пользователе</b>\n\n"
-        f" ID: <code>{user_id}</code>\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
         f"👤 Имя: {user['first_name']} {user['last_name'] or ''}\n"
         f"🔖 Username: {username}\n"
-        f" Первый раз: {user['created_at'][:16]}\n"
+        f"📅 Первый раз: {user['created_at'][:16]}\n"
         f"🕐 Последний раз: {user['last_seen'][:16] if user['last_seen'] else 'никогда'}\n\n"
     )
     if user_data['history']:
