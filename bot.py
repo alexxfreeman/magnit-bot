@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import re
-from typing import Optional
+from typing import Optional, Tuple
+from urllib.parse import urlparse, parse_qs
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, Command
@@ -29,7 +30,7 @@ dp = Dispatcher()
 router = Router()
 
 # ВАШ Telegram ID (узнать у @userinfobot)
-ADMIN_ID = 516400446  # ← ЗАМЕНИТЕ НА СВОЙ
+ADMIN_ID = 123456789  # ← ЗАМЕНИТЕ НА СВОЙ ID
 
 
 class ScanStates(StatesGroup):
@@ -39,11 +40,41 @@ class ScanStates(StatesGroup):
 user_last_article = {}
 
 
-def extract_article_from_text(text: str) -> Optional[str]:
-    """Извлекает артикул из текста или ссылки"""
+def extract_article_from_text(text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Извлекает из текста или ссылки:
+    - артикул
+    - shopCode (если есть в URL)
+    - catalogType (если есть в URL)
+    Возвращает кортеж: (article, shop_code, catalog_type)
+    """
     text = text.strip()
+    shop_code = None
+    catalog_type = None
+
+    # Пробуем распарсить как URL
+    try:
+        parsed = urlparse(text if '://' in text else f'https://{text}')
+        params = parse_qs(parsed.query)
+
+        if 'shopCode' in params:
+            shop_code = params['shopCode'][0]
+        if 'catalogType' in params:
+            catalog_type = params['catalogType'][0]
+
+        # Ищем артикул в path
+        path_parts = parsed.path.strip('/').split('/')
+        for part in path_parts:
+            if part.isdigit() and len(part) >= 10:
+                return part, shop_code, catalog_type
+    except Exception:
+        pass
+
+    # Если это просто цифры
     if text.isdigit() and len(text) >= 10:
-        return text
+        return text, None, None
+
+    # Ищем артикул в тексте
     patterns = [
         r'(?:product|catalog|goods)[/\w-]*(\d{10,})',
         r'magnit\.ru[/\w-]*(\d{10,})',
@@ -52,8 +83,9 @@ def extract_article_from_text(text: str) -> Optional[str]:
     for pattern in patterns:
         match = re.search(pattern, text)
         if match and match.group(1).isdigit():
-            return match.group(1)
-    return None
+            return match.group(1), shop_code, catalog_type
+
+    return None, None, None
 
 
 # === КОМАНДЫ ===
@@ -133,7 +165,7 @@ async def process_location(message: Message, state: FSMContext):
     for i, store in enumerate(stores_to_check, 1):
         store_code = store["code"]
         try:
-            product = await magnit_api.search_product(article, store_code)
+            product = await magnit_api.search_product(article, shop_code=store_code)
             checked_count += 1
             if product:
                 address = ""
@@ -215,7 +247,7 @@ async def wrong_input_during_location(message: Message):
 @router.message(F.text)
 async def handle_article(message: Message):
     raw_text = message.text.strip()
-    article = extract_article_from_text(raw_text)
+    article, shop_code, catalog_type = extract_article_from_text(raw_text)
 
     if not article:
         await message.answer(
@@ -227,9 +259,18 @@ async def handle_article(message: Message):
         return
 
     user_last_article[message.from_user.id] = article
-    await message.answer("🔍 Ищу товар в базе Магнита...")
 
-    product = await magnit_api.search_product(article)
+    info_text = f"🔍 Ищу товар {article}"
+    if shop_code:
+        info_text += f" (магазин {shop_code})"
+    info_text += "..."
+    await message.answer(info_text)
+
+    product = await magnit_api.search_product(
+        article,
+        shop_code=shop_code,
+        catalog_type=catalog_type
+    )
 
     if not product:
         await message.answer(
@@ -243,6 +284,7 @@ async def handle_article(message: Message):
     text = (
         f"📦 <b>{product.name}</b>\n\n"
         f"💰 <b>Цена:</b> {product.price:.2f} ₽\n"
+        f"📋 <b>Каталог:</b> {product.catalog_type_name}\n"
         f"📊 <b>Статус:</b> {stock_status}\n"
         f"📦 <b>Количество:</b> {product.quantity} шт.\n"
         f"⭐ <b>Рейтинг:</b> {product.rating}/5\n\n"
@@ -406,7 +448,6 @@ async def cmd_broadcast(message: Message):
 
 async def main():
     await init_db()
-    # Подключаем middleware для логирования
     dp.message.middleware(LoggingMiddleware())
     dp.callback_query.middleware(LoggingMiddleware())
     dp.include_router(router)
