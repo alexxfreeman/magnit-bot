@@ -20,7 +20,6 @@ class LoggingMiddleware(BaseMiddleware):
         if not user:
             return await handler(event, data)
 
-        # Определяем тип действия
         if isinstance(event, CallbackQuery):
             action = 'callback'
             details = event.data or ''
