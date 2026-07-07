@@ -29,8 +29,7 @@ bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
-# ВАШ Telegram ID (узнать у @userinfobot)
-ADMIN_ID = 516400446  # ← ЗАМЕНИТЕ НА СВОЙ ID
+ADMIN_ID = 516400446
 
 
 class ScanStates(StatesGroup):
@@ -48,9 +47,11 @@ def extract_article_from_text(text: str) -> Tuple[Optional[str], Optional[str], 
     try:
         parsed = urlparse(text if '://' in text else f'https://{text}')
         params = parse_qs(parsed.query)
-        if 'shopCode' in params: shop_code = params['shopCode'][0]
-        if 'catalogType' in params: catalog_type = params['catalogType'][0]
-        
+        if 'shopCode' in params:
+            shop_code = params['shopCode'][0]
+        if 'catalogType' in params:
+            catalog_type = params['catalogType'][0]
+
         path_parts = parsed.path.strip('/').split('/')
         for part in path_parts:
             if part.isdigit() and len(part) >= 10:
@@ -73,8 +74,6 @@ def extract_article_from_text(text: str) -> Tuple[Optional[str], Optional[str], 
 
     return None, None, None
 
-
-# === КОМАНДЫ ===
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
@@ -118,8 +117,6 @@ async def cmd_cancel(message: Message, state: FSMContext):
     await message.answer("❌ Действие отменено.", reply_markup=ReplyKeyboardRemove())
 
 
-# === ОБРАБОТКА ГЕОЛОКАЦИИ ===
-
 @router.message(ScanStates.waiting_for_location, F.location)
 async def process_location(message: Message, state: FSMContext):
     lat = message.location.latitude
@@ -130,7 +127,7 @@ async def process_location(message: Message, state: FSMContext):
 
     await message.answer(
         f"🔍 Ищу магазины рядом...\n"
-        f"📍 Координаты: {lat:.4f}, {lon:.4f}\n"
+        f" Координаты: {lat:.4f}, {lon:.4f}\n"
         f"📦 Артикул: {article}",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -141,7 +138,6 @@ async def process_location(message: Message, state: FSMContext):
         return
 
     stores_to_check = stores[:50]
-    # Текст теперь ТОЧНО совпадает с реальностью
     await message.answer(f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие в {len(stores_to_check)} магазинах...")
 
     results = []
@@ -150,13 +146,12 @@ async def process_location(message: Message, state: FSMContext):
     for i, store in enumerate(stores_to_check, 1):
         store_code = store["code"]
         try:
-            # Теперь search_product проверяет ТОЛЬКО этот магазин
             product = await magnit_api.search_product(
-    article, 
-    shop_code=store_code,
-    store_type=1,
-    catalog_type=1
-)
+                article,
+                shop_code=store_code,
+                store_type=1,
+                catalog_type=1
+            )
             checked_count += 1
             if product:
                 address = ""
@@ -178,10 +173,10 @@ async def process_location(message: Message, state: FSMContext):
 
         if i % 10 == 0:
             await message.answer(f"⏳ Проверено {i}/{len(stores_to_check)} магазинов...")
-        await asyncio.sleep(0.1)  # Задержка только для защиты от бана, не для скорости
+        await asyncio.sleep(0.1)
 
     if not results:
-        await message.answer(" Товар не найден ни в одном магазине.")
+        await message.answer("❌ Товар не найден ни в одном магазине.")
         return
 
     in_stock = sorted([r for r in results if r["in_stock"]], key=lambda x: x["price"])
@@ -199,10 +194,10 @@ async def process_location(message: Message, state: FSMContext):
 
     for i, result in enumerate(top_10, 1):
         if result["in_stock"]:
-            text += f"{i}.  <b>{result['store_name']}</b>\n"
+            text += f"{i}. 🏪 <b>{result['store_name']}</b>\n"
             text += f"   💰 Цена: <b>{result['price']:.2f} ₽</b>\n"
             text += f"   📦 В наличии: {result['quantity']} шт.\n"
-            text += f"    {result['store_address']}\n"
+            text += f"   📍 {result['store_address']}\n"
             text += f"   📏 Расстояние: {result['distance']:.1f} км\n"
             text += f"   🔗 <a href='{result['url']}'>Открыть в Магните</a>\n\n"
         else:
@@ -213,11 +208,11 @@ async def process_location(message: Message, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")],
+            [InlineKeyboardButton(text=" Новый поиск", callback_data="new_search")],
             [InlineKeyboardButton(text="📊 Проверить другой товар", callback_data="check_all_other")]
         ]
     )
-    await message.answer("💡 Что хотите сделать дальше?", reply_markup=keyboard)
+    await message.answer(" Что хотите сделать дальше?", reply_markup=keyboard)
 
 
 @router.message(ScanStates.waiting_for_location, F.text)
@@ -225,15 +220,13 @@ async def wrong_input_during_location(message: Message):
     if message.text == "/cancel":
         return
     await message.answer(
-        "⚠️ Пожалуйста, отправь геолокацию через кнопку ниже.\nИли /cancel чтобы отменить.",
+        "️ Пожалуйста, отправь геолокацию через кнопку ниже.\nИли /cancel чтобы отменить.",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
             resize_keyboard=True
         )
     )
 
-
-# === ОБЫЧНЫЙ ПОИСК ТОВАРА ===
 
 @router.message(F.text)
 async def handle_article(message: Message):
@@ -251,22 +244,21 @@ async def handle_article(message: Message):
 
     user_last_article[message.from_user.id] = article
 
-    info_text = f" Ищу товар {article}"
+    info_text = f"🔍 Ищу товар {article}"
     if shop_code:
         info_text += f" (магазин {shop_code})"
     info_text += "..."
     await message.answer(info_text)
 
-   # Преобразуем в числа, если они есть
-shop_code_int = int(shop_code) if shop_code and shop_code.isdigit() else None
-catalog_type_int = int(catalog_type) if catalog_type and catalog_type.isdigit() else 1
+    shop_code_int = int(shop_code) if shop_code and shop_code.isdigit() else None
+    catalog_type_int = int(catalog_type) if catalog_type and catalog_type.isdigit() else 1
 
-product = await magnit_api.search_product(
-    article,
-    shop_code=shop_code,
-    store_type=1,  # Фиксируем на 1 (магазин)
-    catalog_type=catalog_type_int
-)
+    product = await magnit_api.search_product(
+        article,
+        shop_code=shop_code,
+        store_type=1,
+        catalog_type=catalog_type_int
+    )
 
     if not product:
         await message.answer(
@@ -309,8 +301,6 @@ product = await magnit_api.search_product(
     await message.answer("💡 Что хотите сделать дальше?", reply_markup=keyboard)
 
 
-# === CALLBACK ОБРАБОТЧИКИ ===
-
 @router.callback_query(F.data == "new_search")
 async def callback_new_search(callback_query: CallbackQuery):
     await callback_query.message.answer("🔍 Отправьте артикул товара или ссылку:")
@@ -345,17 +335,16 @@ async def callback_check_all_other(callback_query: CallbackQuery):
     await callback_query.answer()
 
 
-# === АДМИНСКИЕ КОМАНДЫ ===
-
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
-    if message.from_user.id != ADMIN_ID: return
+    if message.from_user.id != ADMIN_ID:
+        return
     stats = await get_user_stats()
     text = (
-        f" <b>Статистика бота</b>\n\n"
+        f"📊 <b>Статистика бота</b>\n\n"
         f"👥 Всего пользователей: <b>{stats['total_users']}</b>\n"
         f"🟢 Активных за 24ч: <b>{stats['active_24h']}</b>\n"
-        f"🔍 Всего поисков: <b>{stats['total_searches']}</b>\n\n"
+        f" Всего поисков: <b>{stats['total_searches']}</b>\n\n"
         f"<b>🏆 Топ-10 пользователей:</b>\n"
     )
     for i, user in enumerate(stats['top_users'], 1):
@@ -366,12 +355,13 @@ async def cmd_stats(message: Message):
 
 @router.message(Command("logs"))
 async def cmd_logs(message: Message):
-    if message.from_user.id != ADMIN_ID: return
+    if message.from_user.id != ADMIN_ID:
+        return
     logs = await get_recent_logs(limit=20)
     if not logs:
         await message.answer("📭 Логов пока нет.")
         return
-    text = " <b>Последние действия:</b>\n\n"
+    text = "📋 <b>Последние действия:</b>\n\n"
     for log in logs[:15]:
         username = f"@{log['username']}" if log['username'] else log['first_name']
         timestamp = log['timestamp'][:16]
@@ -383,7 +373,8 @@ async def cmd_logs(message: Message):
 
 @router.message(Command("user"))
 async def cmd_user(message: Message):
-    if message.from_user.id != ADMIN_ID: return
+    if message.from_user.id != ADMIN_ID:
+        return
     try:
         user_id = int(message.text.split()[1])
     except (IndexError, ValueError):
@@ -396,12 +387,12 @@ async def cmd_user(message: Message):
     user = user_data['user']
     username = f"@{user['username']}" if user['username'] else 'нет'
     text = (
-        f" <b>Информация о пользователе</b>\n\n"
+        f"👤 <b>Информация о пользователе</b>\n\n"
         f"🆔 ID: <code>{user_id}</code>\n"
         f"👤 Имя: {user['first_name']} {user['last_name'] or ''}\n"
-        f" Username: {username}\n"
+        f"🔖 Username: {username}\n"
         f"📅 Первый раз: {user['created_at'][:16]}\n"
-        f" Последний раз: {user['last_seen'][:16] if user['last_seen'] else 'никогда'}\n\n"
+        f"🕐 Последний раз: {user['last_seen'][:16] if user['last_seen'] else 'никогда'}\n\n"
     )
     if user_data['history']:
         text += "<b>🔍 Последние поиски:</b>\n"
@@ -417,7 +408,8 @@ async def cmd_user(message: Message):
 
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
-    if message.from_user.id != ADMIN_ID: return
+    if message.from_user.id != ADMIN_ID:
+        return
     broadcast_text = message.text.replace('/broadcast', '', 1).strip()
     if not broadcast_text:
         await message.answer("❌ Использование: <code>/broadcast ТЕКСТ</code>", parse_mode="HTML")
@@ -435,8 +427,6 @@ async def cmd_broadcast(message: Message):
             logger.error(f"Не удалось отправить {user_id}: {e}")
     await message.answer(f"✅ Рассылка завершена!\n📨 Отправлено: {sent}\n❌ Ошибок: {failed}")
 
-
-# === ЗАПУСК ===
 
 async def main():
     await init_db()
