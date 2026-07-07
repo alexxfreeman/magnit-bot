@@ -13,29 +13,18 @@ geolocator = Nominatim(user_agent="magnit_bot_v1")
 CATALOG_TYPE_NAMES = {
     "1": "🏪 В магазине",
     "2": "🚚 Доставка",
-    "3": " Самовывоз"
+    "3": "📦 Самовывоз"
 }
 
-# Магазины из разных регионов РФ для поиска товара "вообще"
+# Магазины из разных регионов РФ
 FALLBACK_STORES = [
-    # Москва и МО
-    "760001", "494318", "219282",
-    # Санкт-Петербург
-    "764574", "764729",
-    # Ярославль
-    "764557", "388291", "703750", "764548", "764683",
-    # Юг России
-    "764602", "760004",
-    # Урал
-    "947604", "760078",
-    # Сибирь
-    "764657", "720146",
-    # Поволжье
-    "937695",
-    # Центр
-    "388641", "760151",
-    # Дальний Восток
-    "453594", "764525",
+    "760001", "494318", "219282",  # Москва
+    "764574", "764729",  # СПб
+    "764557", "388291", "703750", "764548", "764683",  # Ярославль
+    "764602", "760004",  # Юг
+    "947604", "760078",  # Урал
+    "764657", "720146",  # Сибирь
+    "937695", "388641", "760151", "453594", "764525",  # Другие регионы
 ]
 
 
@@ -85,77 +74,115 @@ class MagnitAPI:
     ) -> Optional[Product]:
         """
         Поиск товара.
-        ВАЖНО: всегда перебирает все магазины, даже если shop_code указан.
-        Если shop_code указан — он пробует ПЕРВЫМ, но при неудаче идёт дальше.
+        Стратегия:
+        1. Если shop_code и catalog_type указаны - пробуем их первым
+        2. Перебираем fallback магазины с catalogType=1 (основной)
+        3. Если не нашли - пробуем catalogType=2 и 3
         """
-        # Формируем список магазинов: shop_code первым, потом fallback
+        # Шаг 1: Пробуем конкретный магазин и каталог из ссылки
+        if shop_code and catalog_type:
+            logger.info(f"Пробую магазин {shop_code} с catalogType={catalog_type}")
+            product = await self._try_search(article, shop_code, store_type, catalog_type)
+            if product:
+                return product
+
+        # Шаг 2: Перебираем fallback магазины с catalogType=1
         codes_to_try = []
-        if shop_code:
+        if shop_code and shop_code not in codes_to_try:
             codes_to_try.append(shop_code)
-        # Добавляем fallback, избегая дубликатов
-        for code in FALLBACK_STORES:
-            if code not in codes_to_try:
-                codes_to_try.append(code)
+        codes_to_try.extend(FALLBACK_STORES)
 
-        # Варианты catalogType
-        catalog_types = [catalog_type] if catalog_type else ["1", "2", "3"]
-
-        total_attempts = 0
-        found_in = None
-
+        # Убираем дубликаты
+        seen = set()
+        unique_codes = []
         for code in codes_to_try:
-            for cat_type in catalog_types:
-                total_attempts += 1
-                payload = {
-                    "term": article,
-                    "storeCode": code,
-                    "storeType": store_type,
-                    "catalogType": cat_type,
-                    "includeAdultGoods": True,
-                    "pagination": {"offset": 0, "limit": 36},
-                    "sort": {"order": "desc", "type": "popularity"}
-                }
+            if code not in seen:
+                seen.add(code)
+                unique_codes.append(code)
+        codes_to_try = unique_codes
 
-                try:
-                    response = self.scraper.post(
-                        self.SEARCH_URL, json=payload, headers=self.headers, timeout=15
-                    )
-                    if response.status_code != 200:
-                        logger.debug(f"HTTP {response.status_code} для {code}/{cat_type}")
-                        continue
+        # Пробуем основной каталог (1)
+        logger.info(f"Перебираю {len(codes_to_try)} магазинов с catalogType=1")
+        for code in codes_to_try:
+            product = await self._try_search(article, code, store_type, "1")
+            if product:
+                return product
+            await asyncio.sleep(0.1)  # Небольшая задержка
 
-                    data = response.json()
-                    if not data.get("isSearchByArticle"):
-                        continue
+        # Шаг 3: Если не нашли - пробуем другие каталоги
+        if catalog_type != "2":
+            logger.info("Пробую catalogType=2")
+            for code in codes_to_try[:5]:  # Только первые 5 магазинов
+                product = await self._try_search(article, code, store_type, "2")
+                if product:
+                    return product
+                await asyncio.sleep(0.1)
 
-                    items = data.get("items", [])
-                    if not items:
-                        continue
+        if catalog_type != "3":
+            logger.info("Пробую catalogType=3")
+            for code in codes_to_try[:5]:  # Только первые 5 магазинов
+                product = await self._try_search(article, code, store_type, "3")
+                if product:
+                    return product
+                await asyncio.sleep(0.1)
 
-                    # НАШЛИ!
-                    item = items[0]
-                    found_in = f"{code} (catalogType={cat_type})"
-                    logger.info(f"✅ Товар найден в магазине {found_in} (попытка #{total_attempts})")
-
-                    return Product(
-                        id=item.get("id") or item.get("productId"),
-                        name=item.get("name", "Без названия"),
-                        price=item.get("price", 0) / 100,
-                        quantity=item.get("quantity", 0),
-                        store_code=item.get("storeCode", code),
-                        image_url=self._get_image_url(item),
-                        rating=item.get("ratings", {}).get("rating", 0),
-                        is_adult=item.get("isForAdults", False),
-                        seo_code=item.get("seoCode", ""),
-                        catalog_type=cat_type,
-                        catalog_type_name=CATALOG_TYPE_NAMES.get(cat_type, f"Каталог {cat_type}")
-                    )
-                except Exception as e:
-                    logger.error(f"Ошибка поиска {article} в {code} (cat={cat_type}): {e}")
-                    continue
-
-        logger.info(f"❌ Товар {article} не найден после {total_attempts} попыток в {len(codes_to_try)} магазинах")
+        logger.info(f"❌ Товар {article} не найден")
         return None
+
+    async def _try_search(
+        self,
+        article: str,
+        store_code: str,
+        store_type: str,
+        catalog_type: str
+    ) -> Optional[Product]:
+        """Попытка найти товар в конкретном магазине с конкретным каталогом"""
+        payload = {
+            "term": article,
+            "storeCode": store_code,
+            "storeType": store_type,
+            "catalogType": catalog_type,
+            "includeAdultGoods": True,
+            "pagination": {"offset": 0, "limit": 36},
+            "sort": {"order": "desc", "type": "popularity"}
+        }
+
+        try:
+            response = self.scraper.post(
+                self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
+            )
+
+            if response.status_code != 200:
+                logger.debug(f"HTTP {response.status_code} для {store_code}/{catalog_type}")
+                return None
+
+            data = response.json()
+            if not data.get("isSearchByArticle"):
+                return None
+
+            items = data.get("items", [])
+            if not items:
+                return None
+
+            item = items[0]
+            logger.info(f"✅ Найден в {store_code} (cat={catalog_type}): {item.get('name', '')}")
+
+            return Product(
+                id=item.get("id") or item.get("productId"),
+                name=item.get("name", "Без названия"),
+                price=item.get("price", 0) / 100,
+                quantity=item.get("quantity", 0),
+                store_code=item.get("storeCode", store_code),
+                image_url=self._get_image_url(item),
+                rating=item.get("ratings", {}).get("rating", 0),
+                is_adult=item.get("isForAdults", False),
+                seo_code=item.get("seoCode", ""),
+                catalog_type=catalog_type,
+                catalog_type_name=CATALOG_TYPE_NAMES.get(catalog_type, f"Каталог {catalog_type}")
+            )
+        except Exception as e:
+            logger.error(f"Ошибка {store_code}/{catalog_type}: {e}")
+            return None
 
     def _get_image_url(self, item: dict) -> str:
         gallery = item.get("gallery", [])
