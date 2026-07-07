@@ -64,28 +64,23 @@ class MagnitAPI:
         }
 
     async def search_product(
-        self,
-        article: str,
-        shop_code: str = None,
-        store_type: str = "MM",  # Теперь строка! "MM", "DG", "MC" и т.д.
-        catalog_type: int = 1    # Число (1, 2, 3)
-    ) -> Optional[Product]:
-        """
-        Поиск товара.
-        store_type — СТРОКА ("MM", "DG", "MC")
-        catalog_type — ЧИСЛО (1, 2, 3)
-        """
-        if shop_code:
-            return await self._try_search(article, shop_code, store_type, catalog_type)
+    self,
+    article: str,
+    shop_code: str = None,
+    store_type: str = "MM",   # Строка
+    catalog_type: str = "1"   # Теперь тоже СТРОКА!
+) -> Optional[Product]:
+    if shop_code:
+        return await self._try_search(article, shop_code, store_type, catalog_type)
 
-        codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
-        for code in codes_to_try:
-            product = await self._try_search(article, code, store_type, catalog_type)
-            if product:
-                return product
-            await asyncio.sleep(0.2)
+    codes_to_try = list(dict.fromkeys(FALLBACK_STORES))
+    for code in codes_to_try:
+        product = await self._try_search(article, code, store_type, catalog_type)
+        if product:
+            return product
+        await asyncio.sleep(0.2)
 
-        return None
+    return None
 
     async def _try_search(
         self,
