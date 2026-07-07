@@ -83,22 +83,22 @@ class MagnitAPI:
     return None
 
     async def _try_search(
-        self,
-        article: str,
-        store_code: str,
-        store_type: str,
-        catalog_type: int
-    ) -> Optional[Product]:
-        payload = {
-            "term": article,
-            "storeCode": store_code,
-            "storeType": store_type,  # СТРОКА: "MM", "DG", "MC"
-            "catalogType": catalog_type,  # ЧИСЛО: 1, 2, 3
-            "includeAdultGoods": True,
-            "pagination": {"offset": 0, "limit": 36},
-            "sort": {"order": "desc", "type": "popularity"}
-        }
-
+    self,
+    article: str,
+    store_code: str,
+    store_type: str,
+    catalog_type: str   # СТРОКА!
+) -> Optional[Product]:
+    payload = {
+        "term": article,
+        "storeCode": store_code,
+        "storeType": store_type,      # Строка: "MM"
+        "catalogType": catalog_type,  # Строка: "1"
+        "includeAdultGoods": True,
+        "pagination": {"offset": 0, "limit": 36},
+        "sort": {"order": "desc", "type": "popularity"}
+    }
+  
         try:
             response = self.scraper.post(
                 self.SEARCH_URL, json=payload, headers=self.headers, timeout=10
