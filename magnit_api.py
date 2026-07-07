@@ -3,28 +3,26 @@ import asyncio
 import logging
 import math
 from typing import List, Dict, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
 
 logger = logging.getLogger(__name__)
 geolocator = Nominatim(user_agent="magnit_bot_v1")
 
-# Названия типов каталогов (предположительно)
 CATALOG_TYPE_NAMES = {
     "1": "🏪 В магазине",
     "2": "🚚 Доставка",
-    "3": "📦 Самовывоз"
+    "3": " Самовывоз"
 }
 
 # Магазины из разных регионов РФ для поиска товара "вообще"
-# Если товар региональный — найдётся в одном из них
 FALLBACK_STORES = [
     # Москва и МО
     "760001", "494318", "219282",
     # Санкт-Петербург
     "764574", "764729",
-    # Ярославль (из файла)
+    # Ярославль
     "764557", "388291", "703750", "764548", "764683",
     # Юг России
     "764602", "760004",
@@ -33,7 +31,7 @@ FALLBACK_STORES = [
     # Сибирь
     "764657", "720146",
     # Поволжье
-    "760004", "937695",
+    "937695",
     # Центр
     "388641", "760151",
     # Дальний Восток
@@ -87,31 +85,27 @@ class MagnitAPI:
     ) -> Optional[Product]:
         """
         Поиск товара.
-        Стратегия:
-        1. Если shop_code указан (из ссылки) — ищем в нём первым
-        2. Перебираем fallback-магазины из разных регионов
-        3. Для каждого магазина пробуем все 3 типа каталога (магазин/доставка/самовывоз)
+        ВАЖНО: всегда перебирает все магазины, даже если shop_code указан.
+        Если shop_code указан — он пробует ПЕРВЫМ, но при неудаче идёт дальше.
         """
-        # Список магазинов для перебора
+        # Формируем список магазинов: shop_code первым, потом fallback
         codes_to_try = []
         if shop_code:
             codes_to_try.append(shop_code)
-        codes_to_try.extend(FALLBACK_STORES)
-
-        # Убираем дубликаты
-        seen = set()
-        unique_codes = []
-        for code in codes_to_try:
-            if code not in seen:
-                seen.add(code)
-                unique_codes.append(code)
-        codes_to_try = unique_codes
+        # Добавляем fallback, избегая дубликатов
+        for code in FALLBACK_STORES:
+            if code not in codes_to_try:
+                codes_to_try.append(code)
 
         # Варианты catalogType
         catalog_types = [catalog_type] if catalog_type else ["1", "2", "3"]
 
+        total_attempts = 0
+        found_in = None
+
         for code in codes_to_try:
             for cat_type in catalog_types:
+                total_attempts += 1
                 payload = {
                     "term": article,
                     "storeCode": code,
@@ -127,6 +121,7 @@ class MagnitAPI:
                         self.SEARCH_URL, json=payload, headers=self.headers, timeout=15
                     )
                     if response.status_code != 200:
+                        logger.debug(f"HTTP {response.status_code} для {code}/{cat_type}")
                         continue
 
                     data = response.json()
@@ -137,8 +132,12 @@ class MagnitAPI:
                     if not items:
                         continue
 
+                    # НАШЛИ!
                     item = items[0]
-                    product = Product(
+                    found_in = f"{code} (catalogType={cat_type})"
+                    logger.info(f"✅ Товар найден в магазине {found_in} (попытка #{total_attempts})")
+
+                    return Product(
                         id=item.get("id") or item.get("productId"),
                         name=item.get("name", "Без названия"),
                         price=item.get("price", 0) / 100,
@@ -151,13 +150,11 @@ class MagnitAPI:
                         catalog_type=cat_type,
                         catalog_type_name=CATALOG_TYPE_NAMES.get(cat_type, f"Каталог {cat_type}")
                     )
-                    logger.info(f"✅ Найден товар в магазине {code} ({product.catalog_type_name}): {product.name} ({product.price}₽)")
-                    return product
                 except Exception as e:
                     logger.error(f"Ошибка поиска {article} в {code} (cat={cat_type}): {e}")
                     continue
 
-        logger.info(f"❌ Товар {article} не найден ни в одном магазине/каталоге")
+        logger.info(f"❌ Товар {article} не найден после {total_attempts} попыток в {len(codes_to_try)} магазинах")
         return None
 
     def _get_image_url(self, item: dict) -> str:
@@ -173,7 +170,6 @@ class MagnitAPI:
         }
 
     async def get_stores_nearby(self, lat: float, lon: float, radius_km: float = 10) -> List[dict]:
-        """Получение магазинов рядом с пользователем через API Магнита"""
         bbox = self.calculate_bounding_box(lat, lon, radius_km)
         payload = {
             "filters": {
@@ -225,7 +221,6 @@ class MagnitAPI:
 
 
 def get_address_from_coordinates(lat: float, lon: float) -> str:
-    """Получает адрес по координатам через OpenStreetMap"""
     try:
         location = geolocator.reverse(f"{lat}, {lon}", language="ru", timeout=5)
         if location and location.address:
