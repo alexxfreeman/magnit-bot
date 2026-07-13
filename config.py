@@ -1,12 +1,10 @@
-import os
-from dataclasses import dataclass
+   import os
+   from dotenv import load_dotenv
 
-@dataclass
-class Config:
-    BOT_TOKEN: str = os.getenv("BOT_TOKEN")
-    WEBAPP_URL: str = os.getenv("WEBAPP_URL", "https://your-domain.com")
-    DB_PATH: str = os.getenv("DB_PATH", "magnit_scanner.db")
-    DEFAULT_RADIUS: int = 3000
-    MAGNIT_API_BASE: str = "https://magnit.ru/api"
+   load_dotenv()
 
-config = Config()
+   BOT_TOKEN = os.getenv("BOT_TOKEN")
+   ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
+
+   if not BOT_TOKEN:
+       raise ValueError("BOT_TOKEN не найден в .env!")
