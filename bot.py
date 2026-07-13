@@ -54,7 +54,7 @@ def extract_article_from_text(text: str) -> Tuple[Optional[str], Optional[str], 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer("👋 <b>Привет! Я бот для проверки товаров в Магните.</b>\n\nОтправь мне <b>артикул товара</b> или <b>ссылку</b> из приложения Магнит, и я проверю наличие и цену.\n\nПримеры:\n• Артикул: <code>1199991965</code>\n• Ссылка из приложения Магнит", parse_mode="HTML")
+    await message.answer(" <b>Привет! Я бот для проверки товаров в Магните.</b>\n\nОтправь мне <b>артикул товара</b> или <b>ссылку</b> из приложения Магнит, и я проверю наличие и цену.\n\nПримеры:\n• Артикул: <code>1199991965</code>\n• Ссылка из приложения Магнит", parse_mode="HTML")
 
 @router.message(Command("check_all"))
 async def cmd_check_all(message: Message, state: FSMContext):
@@ -64,7 +64,7 @@ async def cmd_check_all(message: Message, state: FSMContext):
         return
     await state.update_data(article=user_last_article[user_id])
     kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]], resize_keyboard=True)
-    await message.answer("📍 Отправь геолокацию, чтобы я нашёл магазины рядом.\nИли /cancel чтобы отменить.", reply_markup=kb)
+    await message.answer(" Отправь геолокацию, чтобы я нашёл магазины рядом.\nИли /cancel чтобы отменить.", reply_markup=kb)
     await state.set_state(ScanStates.waiting_for_location)
 
 @router.message(Command("cancel"))
@@ -97,7 +97,7 @@ async def cmd_user(message: Message):
     data = await get_user_details(uid)
     if not data: await message.answer(f"❌ Пользователь {uid} не найден."); return
     u = data['user']
-    txt = f"👤 <b>{u['first_name']} {u['last_name'] or ''}</b>\n🆔 {uid}\n🔖 @{u['username'] or 'нет'}\n📅 С {u['created_at'][:10]}\n🕐 Был {u['last_seen'][:10] if u['last_seen'] else 'никогда'}\n\n"
+    txt = f"👤 <b>{u['first_name']} {u['last_name'] or ''}</b>\n🆔 {uid}\n🔖 @{u['username'] or 'нет'}\n📅 С {u['created_at'][:10]}\n Был {u['last_seen'][:10] if u['last_seen'] else 'никогда'}\n\n"
     if data['history']: txt += "<b>Последние поиски:</b>\n" + "\n".join(f"• {h['article']} — {h['title'][:25]} ({h['price']}₽)" for h in data['history'][:5])
     await message.answer(txt, parse_mode="HTML")
 
@@ -105,7 +105,7 @@ async def cmd_user(message: Message):
 async def cmd_broadcast(message: Message):
     if message.from_user.id != ADMIN_ID: return
     txt = message.text.replace('/broadcast', '', 1).strip()
-    if not txt: await message.answer("❌ /broadcast ТЕКСТ", parse_mode="HTML"); return
+    if not txt: await message.answer(" /broadcast ТЕКСТ", parse_mode="HTML"); return
     await message.answer("📨 Начинаю рассылку...")
     users = await get_all_users()
     s = f = 0
@@ -121,13 +121,13 @@ async def process_location(message: Message, state: FSMContext):
     data = await state.get_data()
     article = data.get("article")
     await state.clear()
-    await message.answer(f" Ищу магазины рядом...\n📍 Координаты: {lat:.4f}, {lon:.4f}\n📦 Артикул: {article}", reply_markup=ReplyKeyboardRemove())
+    await message.answer(f"🔍 Ищу магазины рядом...\n📍 Координаты: {lat:.4f}, {lon:.4f}\n📦 Артикул: {article}", reply_markup=ReplyKeyboardRemove())
     stores = await magnit_api.get_stores_nearby(lat, lon, radius_km=15)
     if not stores: await message.answer("❌ Не удалось найти магазины рядом с тобой."); return
-    stores_to_check = stores[:20] # Ограничим до 20 для скорости браузера
-    await message.answer(f"🏪 Найдено {len(stores)} магазинов. Проверяю наличие в {len(stores_to_check)} магазинах (это займет время)...")
+    stores_to_check = stores[:20]
+    await message.answer(f" Найдено {len(stores)} магазинов. Проверяю наличие в {len(stores_to_check)} магазинах (это займет время)...")
     results = []
-    sem = asyncio.Semaphore(5) # Ограничим параллельность браузера до 5
+    sem = asyncio.Semaphore(5)
     async def check_store(store):
         async with sem:
             try:
@@ -159,7 +159,7 @@ async def process_location(message: Message, state: FSMContext):
 @router.message(ScanStates.waiting_for_location, F.text)
 async def wrong_input_during_location(message: Message):
     if message.text == "/cancel": return
-    await message.answer("️ Пожалуйста, отправь геолокацию через кнопку ниже.\nИли /cancel чтобы отменить.", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]], resize_keyboard=True))
+    await message.answer("⚠️ Пожалуйста, отправь геолокацию через кнопку ниже.\nИли /cancel чтобы отменить.", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]], resize_keyboard=True))
 
 @router.message(F.text)
 async def handle_article(message: Message):
@@ -176,15 +176,15 @@ async def handle_article(message: Message):
     if not product:
         await message.answer(f"❌ Товар с артикулом <code>{article}</code> не найден.", parse_mode="HTML")
         return
-    stock = "✅ В наличии" if product.in_stock else " Нет в наличии"
-    text = f" <b>{product.name}</b>\n\n💰 <b>Цена:</b> {product.price:.2f} ₽\n📊 <b>Статус:</b> {stock}\n📦 <b>Количество:</b> {product.quantity} шт.\n⭐ <b>Рейтинг:</b> {product.rating}/5\n\n <a href='{product.url}'>Открыть в Магните</a>"
+    stock = "✅ В наличии" if product.in_stock else "❌ Нет в наличии"
+    text = f"📦 <b>{product.name}</b>\n\n <b>Цена:</b> {product.price:.2f} ₽\n📊 <b>Статус:</b> {stock}\n📦 <b>Количество:</b> {product.quantity} шт.\n⭐ <b>Рейтинг:</b> {product.rating}/5\n\n🔗 <a href='{product.url}'>Открыть в Магните</a>"
     if product.image_url and product.image_url.startswith(('http://', 'https://')):
         try: await message.answer_photo(photo=product.image_url, caption=text, parse_mode="HTML")
         except: await message.answer(text, parse_mode="HTML")
     else: await message.answer(text, parse_mode="HTML")
     await add_to_history(user_id=message.from_user.id, article=article, title=product.name, price=f"{product.price:.2f}", in_stock=product.in_stock)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📊 Проверить во всех магазинах", callback_data="check_all")], [InlineKeyboardButton(text=" Новый поиск", callback_data="new_search")]])
-    await message.answer("💡 Что хотите сделать дальше?", reply_markup=kb)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📊 Проверить во всех магазинах", callback_data="check_all")], [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")]])
+    await message.answer(" Что хотите сделать дальше?", reply_markup=kb)
 
 @router.callback_query(F.data == "new_search")
 async def callback_new_search(cb: CallbackQuery):
@@ -193,10 +193,10 @@ async def callback_new_search(cb: CallbackQuery):
 @router.callback_query(F.data == "check_all")
 async def callback_check_all(cb: CallbackQuery, state: FSMContext):
     user_id = cb.from_user.id
-    if user_id not in user_last_article: await cb.message.answer("❌ Сначала найдите товар."); await cb.answer(); return
+    if user_id not in user_last_article: await cb.message.answer(" Сначала найдите товар."); await cb.answer(); return
     await state.update_data(article=user_last_article[user_id])
     kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]], resize_keyboard=True)
-    await cb.message.answer(" Отправь геолокацию для проверки во всех магазинах:", reply_markup=kb)
+    await cb.message.answer("📍 Отправь геолокацию для проверки во всех магазинах:", reply_markup=kb)
     await state.set_state(ScanStates.waiting_for_location); await cb.answer()
 
 async def main():
@@ -212,7 +212,7 @@ async def main():
         logger.info("🤖 Бот запущен!")
         await dp.start_polling(bot)
     except Exception as e:
-        logger.error(f" КРИТИЧЕСКАЯ ОШИБКА: {e}", exc_info=True)
+        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}", exc_info=True)
         raise
 
 if __name__ == "__main__":
