@@ -435,12 +435,32 @@ async def callback_check_all_other(callback_query: CallbackQuery):
 # === ЗАПУСК ===
 
 async def main():
-    await init_db()
-    dp.message.middleware(LoggingMiddleware())
-    dp.callback_query.middleware(LoggingMiddleware())
-    dp.include_router(router)
-    logging.info("Бот запущен!")
-    await dp.start_polling(bot)
+    try:
+        logger.info("🚀 Запуск бота...")
+        await init_db()
+        logger.info("✅ База данных инициализирована")
+        
+        dp.message.middleware(LoggingMiddleware())
+        dp.callback_query.middleware(LoggingMiddleware())
+        dp.include_router(router)
+        
+        logger.info("✅ Middleware настроены")
+        logger.info(" Бот запущен!")
+        
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА при запуске: {e}", exc_info=True)
+        raise
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот остановлен пользователем.")
+    except Exception as e:
+        logging.error(f"Фатальная ошибка: {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":
