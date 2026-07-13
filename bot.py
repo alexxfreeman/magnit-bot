@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import os
 import re
 from typing import Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -75,7 +77,7 @@ def extract_article_from_text(text: str) -> Tuple[Optional[str], Optional[str], 
     return None, None, None
 
 
-# === КОМАНДЫ (должны быть ПЕРЕД общим обработчиком текста) ===
+# === КОМАНДЫ ===
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
@@ -102,7 +104,7 @@ async def cmd_check_all(message: Message, state: FSMContext):
         return
     await state.update_data(article=user_last_article[user_id])
     kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
+        keyboard=[[KeyboardButton(text=" Отправить геолокацию", request_location=True)]],
         resize_keyboard=True
     )
     await message.answer(
@@ -119,7 +121,7 @@ async def cmd_cancel(message: Message, state: FSMContext):
     await message.answer("❌ Действие отменено.", reply_markup=ReplyKeyboardRemove())
 
 
-# === АДМИНСКИЕ КОМАНДЫ (ПЕРЕД общим обработчиком текста!) ===
+# === АДМИНСКИЕ КОМАНДЫ (ПЕРЕД общим обработчиком текста) ===
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
@@ -129,7 +131,7 @@ async def cmd_stats(message: Message):
     text = (
         f"📊 <b>Статистика бота</b>\n\n"
         f"👥 Всего пользователей: <b>{stats['total_users']}</b>\n"
-        f"🟢 Активных за 24ч: <b>{stats['active_24h']}</b>\n"
+        f" Активных за 24ч: <b>{stats['active_24h']}</b>\n"
         f"🔍 Всего поисков: <b>{stats['total_searches']}</b>\n\n"
         f"<b>🏆 Топ-10 пользователей:</b>\n"
     )
@@ -145,7 +147,7 @@ async def cmd_logs(message: Message):
         return
     logs = await get_recent_logs(limit=20)
     if not logs:
-        await message.answer("📭 Логов пока нет.")
+        await message.answer(" Логов пока нет.")
         return
     text = "📋 <b>Последние действия:</b>\n\n"
     for log in logs[:15]:
@@ -176,7 +178,7 @@ async def cmd_user(message: Message):
         f"👤 <b>Информация о пользователе</b>\n\n"
         f"🆔 ID: <code>{user_id}</code>\n"
         f"👤 Имя: {user['first_name']} {user['last_name'] or ''}\n"
-        f"🔖 Username: {username}\n"
+        f" Username: {username}\n"
         f"📅 Первый раз: {user['created_at'][:16]}\n"
         f"🕐 Последний раз: {user['last_seen'][:16] if user['last_seen'] else 'никогда'}\n\n"
     )
@@ -200,7 +202,7 @@ async def cmd_broadcast(message: Message):
     if not broadcast_text:
         await message.answer("❌ Использование: <code>/broadcast ТЕКСТ</code>", parse_mode="HTML")
         return
-    await message.answer("📨 Начинаю рассылку...")
+    await message.answer(" Начинаю рассылку...")
     users = await get_all_users()
     sent = failed = 0
     for user_id in users:
@@ -211,7 +213,7 @@ async def cmd_broadcast(message: Message):
         except Exception as e:
             failed += 1
             logger.error(f"Не удалось отправить {user_id}: {e}")
-    await message.answer(f"✅ Рассылка завершена!\n📨 Отправлено: {sent}\n❌ Ошибок: {failed}")
+    await message.answer(f"✅ Рассылка завершена!\n📨 Отправлено: {sent}\n Ошибок: {failed}")
 
 
 # === ОБРАБОТКА ГЕОЛОКАЦИИ ===
@@ -275,7 +277,7 @@ async def process_location(message: Message, state: FSMContext):
             results.append(res)
 
     if not results:
-        await message.answer("❌ Товар не найден ни в одном магазине (API не вернул данные).")
+        await message.answer("❌ Товар не найден ни в одном магазине.")
         return
 
     in_stock = sorted([r for r in results if r["in_stock"]], key=lambda x: x["price"])
@@ -296,7 +298,7 @@ async def process_location(message: Message, state: FSMContext):
             text += f"   💰 Цена: <b>{r['price']:.2f} ₽</b>\n"
             text += f"   📦 В наличии: {r['quantity']} шт.\n"
             text += f"   📍 {r['store_address']}\n"
-            text += f"   📏 Расстояние: {r['distance']:.1f} км\n"
+            text += f"    Расстояние: {r['distance']:.1f} км\n"
             text += f"   🔗 <a href='{r['url']}'>Открыть в Магните</a>\n\n"
         else:
             text += f"{i}. ❌ <b>{r['store_name']}</b> - нет в наличии\n"
@@ -365,7 +367,7 @@ async def handle_article(message: Message):
         f"📦 <b>{product.name}</b>\n\n"
         f"💰 <b>Цена:</b> {product.price:.2f} ₽\n"
         f"📊 <b>Статус:</b> {stock_status}\n"
-        f"📦 <b>Количество:</b> {product.quantity} шт.\n"
+        f" <b>Количество:</b> {product.quantity} шт.\n"
         f"⭐ <b>Рейтинг:</b> {product.rating}/5\n\n"
         f"🔗 <a href='{product.url}'>Открыть в Магните</a>"
     )
@@ -408,7 +410,7 @@ async def callback_new_search(callback_query: CallbackQuery):
 async def callback_check_all(callback_query: CallbackQuery, state: FSMContext):
     user_id = callback_query.from_user.id
     if user_id not in user_last_article:
-        await callback_query.message.answer("❌ Сначала найдите товар.")
+        await callback_query.message.answer(" Сначала найдите товар.")
         await callback_query.answer()
         return
     await state.update_data(article=user_last_article[user_id])
@@ -432,24 +434,51 @@ async def callback_check_all_other(callback_query: CallbackQuery):
     await callback_query.answer()
 
 
+# === HTTP СЕРВЕР ДЛЯ RAILWAY ===
+
+async def handle_health(request):
+    """Health check endpoint для Railway"""
+    return web.Response(text="OK")
+
+
+async def start_http_server():
+    """Запускает простой HTTP сервер для Railway"""
+    app = web.Application()
+    app.router.add_get('/', handle_health)
+    app.router.add_get('/health', handle_health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    port = int(os.environ.get('PORT', 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"🌐 HTTP сервер запущен на порту {port}")
+
+    return runner
+
+
 # === ЗАПУСК ===
 
 async def main():
     try:
-        logger.info("🚀 Запуск бота...")
+        logger.info(" Запуск бота...")
         await init_db()
         logger.info("✅ База данных инициализирована")
-        
+
         dp.message.middleware(LoggingMiddleware())
         dp.callback_query.middleware(LoggingMiddleware())
         dp.include_router(router)
-        
+
         logger.info("✅ Middleware настроены")
-        logger.info(" Бот запущен!")
-        
+
+        # Запускаем HTTP сервер для Railway
+        await start_http_server()
+
+        logger.info("🤖 Бот запущен!")
         await dp.start_polling(bot)
     except Exception as e:
-        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА при запуске: {e}", exc_info=True)
+        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}", exc_info=True)
         raise
 
 
@@ -461,10 +490,3 @@ if __name__ == "__main__":
     except Exception as e:
         logging.error(f"Фатальная ошибка: {e}", exc_info=True)
         raise
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Бот остановлен.")
