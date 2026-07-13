@@ -3,4 +3,3 @@ aiohttp==3.10.10
 aiosqlite==0.20.0
 cloudscraper==1.2.71
 geopy==2.4.1
-playwright==1.48.0
