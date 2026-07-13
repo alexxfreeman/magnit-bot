@@ -216,7 +216,9 @@ async def main():
         raise
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit): logging.info("Бот остановлен пользователем.")
-    except Exception as e: logging.error(f"Фатальная ошибка: {e}", exc_info=True)
-        raise
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот остановлен пользователем.")
+    except Exception as e:
+        logging.error(f"Фатальная ошибка: {e}", exc_info=True)
