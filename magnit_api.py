@@ -26,7 +26,7 @@ class Product:
     is_adult: bool
     seo_code: str
     catalog_type: str = "1"
-    catalog_type_name: str = "🏪 В магазине"
+    catalog_type_name: str = " В магазине"
 
     @property
     def in_stock(self) -> bool:
@@ -54,11 +54,9 @@ class MagnitAPI:
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         }
 
-       async def init_browser(self):
+    async def init_browser(self):
         if self.browser is None:
             playwright = await async_playwright().start()
-            
-            # Пробуем разные форматы прокси
             self.browser = await playwright.chromium.launch(
                 headless=True,
                 proxy={
@@ -66,18 +64,13 @@ class MagnitAPI:
                     "username": "nbsYBT",
                     "password": "v6pvCe"
                 },
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu'
-                ]
+                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
             )
             logger.info("✅ Браузер запущен через прокси")
 
     async def search_product(self, article: str, shop_code: str = None) -> Optional[Product]:
         await self.init_browser()
-        logger.info(f" Поиск товара {article} (shop_code={shop_code})")
+        logger.info(f"🔍 Поиск товара {article} (shop_code={shop_code})")
         
         if shop_code:
             url = f"https://magnit.ru/product/{article}?shopCode={shop_code}&shopType=1"
@@ -87,27 +80,19 @@ class MagnitAPI:
         try:
             context = await self.browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
-                user_agent=self.headers["User-Agent"]
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                locale="ru-RU",
+                timezone_id="Europe/Moscow"
             )
+            
             page = await context.new_page()
-            await page.goto(url, wait_until='domcontentloaded', timeout=20000)
+            await page.goto(url, wait_until='domcontentloaded', timeout=30000)
             
-            # Сохраняем HTML для диагностики
-            html = await page.content()
-            with open('/root/magnit-bot/debug_page.html', 'w', encoding='utf-8') as f:
-                f.write(html)
-            logger.info(f" HTML сохранён в debug_page.html (длина: {len(html)})")
-            
-            # Проверяем, есть ли признаки QRATOR/капчи
-            if 'qrator' in html.lower() or 'challenge' in html.lower():
-                logger.warning("⚠️ Обнаружена защита QRATOR на странице")
-            # Ждем появления цены или данных
             try:
-                await page.wait_for_selector('[class*="Price"], [data-testid*="price"]', timeout=5000)
+                await page.wait_for_selector('body', timeout=5000)
             except:
                 pass
 
-            # Извлекаем данные из __NEXT_DATA__ (там точная цена для магазина)
             next_data = await page.evaluate('''() => {
                 const el = document.getElementById('__NEXT_DATA__');
                 return el ? JSON.parse(el.textContent) : null;
@@ -118,7 +103,6 @@ class MagnitAPI:
                 product = self._parse_next_data(next_data, article, shop_code)
             
             if not product:
-                # Fallback на meta-теги
                 product = await self._parse_meta_fallback(page, article, shop_code)
 
             await context.close()
