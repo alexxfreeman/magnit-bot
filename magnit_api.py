@@ -58,6 +58,7 @@ class MagnitAPI:
         if self.browser is None:
             playwright = await async_playwright().start()
             
+            # Пробуем формат с встроенными credentials
             self.browser = await playwright.chromium.launch(
                 headless=True,
                 proxy={
@@ -65,15 +66,9 @@ class MagnitAPI:
                     "username": "nbsYBT",
                     "password": "v6pvCe"
                 },
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--disable-blink-features=AutomationControlled'
-                ]
+                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
             )
-            logger.info("✅ Браузер запущен через HTTP прокси (Россия)")
+            logger.info("✅ Браузер запущен")
 
     async def search_product(self, article: str, shop_code: str = None) -> Optional[Product]:
         await self.init_browser()
