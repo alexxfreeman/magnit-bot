@@ -58,16 +58,13 @@ class MagnitAPI:
         if self.browser is None:
             playwright = await async_playwright().start()
             
+            # Используем HTTP без авторизации (IP привязан в панели прокси)
             self.browser = await playwright.chromium.launch(
                 headless=True,
-                proxy={
-                    "server": "socks5://81.177.180.246:8000",
-                    "username": "nbsYBT",
-                    "password": "v6pvCe"
-                },
+                proxy={"server": "http://81.177.180.246:8000"},
                 args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
             )
-            logger.info("✅ Браузер запущен через SOCKS5 прокси (Россия)")
+            logger.info("✅ Браузер запущен через HTTP прокси (IP-авторизация)")
 
     async def search_product(self, article: str, shop_code: str = None) -> Optional[Product]:
         await self.init_browser()
