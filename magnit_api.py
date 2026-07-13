@@ -53,22 +53,25 @@ class MagnitAPI:
             "Accept-Language": "ru-RU,ru;q=0.9",
         }
 
-    async def init_browser(self):
-        """Инициализация браузера (вызывается один раз при старте)"""
-        if self.browser is None:
-            playwright = await async_playwright().start()
-            self.browser = await playwright.chromium.launch(
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--disable-gpu'
-                ]
-            )
-            logger.info("✅ Браузер инициализирован")
-
+ async def init_browser(self):
+    """Инициализация браузера (вызывается один раз при старте)"""
+    if self.browser is None:
+        playwright = await async_playwright().start()
+        self.browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path="/root/.cache/ms-playwright/chromium-1140/chrome-linux/chrome",
+            args=[
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--single-process',
+                '--no-zygote'
+            ]
+        )
+        logger.info("✅ Браузер инициализирован")
+        
     async def search_product(self, article: str, shop_code: str = None) -> Optional[Product]:
         """Поиск товара через браузер"""
         await self.init_browser()
