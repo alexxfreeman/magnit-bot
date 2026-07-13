@@ -85,6 +85,15 @@ class MagnitAPI:
             page = await context.new_page()
             await page.goto(url, wait_until='domcontentloaded', timeout=20000)
             
+            # Сохраняем HTML для диагностики
+            html = await page.content()
+            with open('/root/magnit-bot/debug_page.html', 'w', encoding='utf-8') as f:
+                f.write(html)
+            logger.info(f" HTML сохранён в debug_page.html (длина: {len(html)})")
+            
+            # Проверяем, есть ли признаки QRATOR/капчи
+            if 'qrator' in html.lower() or 'challenge' in html.lower():
+                logger.warning("⚠️ Обнаружена защита QRATOR на странице")
             # Ждем появления цены или данных
             try:
                 await page.wait_for_selector('[class*="Price"], [data-testid*="price"]', timeout=5000)
