@@ -59,30 +59,27 @@ class MagnitAPI:
         """Поиск товара через парсинг HTML"""
         logger.info(f"🔍 Поиск товара {article} (shop_code={shop_code})")
 
-        # Формируем URL
         if shop_code:
             url = f"https://magnit.ru/product/{article}?shopCode={shop_code}&shopType=1"
         else:
             url = f"https://magnit.ru/product/{article}"
 
         try:
-            # Загружаем HTML
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, self.scraper.get, url, self.headers)
-            
+            response = await loop.run_in_executor(
+                None, lambda: self.scraper.get(url, headers=self.headers, timeout=15)
+            )
+
             if response.status_code != 200:
                 logger.warning(f"⚠️ HTTP {response.status_code} для {article}")
                 return None
 
             html = response.text
-
-            # Извлекаем данные из __NEXT_DATA__
             product = self._parse_next_data(html, article, shop_code)
             if product:
                 logger.info(f"✅ Найдено: {product.name[:50]}... ({product.price}₽)")
                 return product
 
-            # Fallback: meta-теги
             product = self._parse_meta_tags(html, article, shop_code)
             if product:
                 logger.info(f"✅ Найдено (meta): {product.name[:50]}... ({product.price}₽)")
@@ -92,11 +89,10 @@ class MagnitAPI:
             return None
 
         except Exception as e:
-            logger.error(f"❌ Ошибка при парсинге {article}: {e}")
+            logger.error(f" Ошибка при парсинге {article}: {e}")
             return None
 
     def _parse_next_data(self, html: str, article: str, shop_code: str = None) -> Optional[Product]:
-        """Извлекает данные из __NEXT_DATA__"""
         try:
             match = re.search(
                 r'<script\s+id="__NEXT_DATA__"\s+type="application/json">(.*?)</script>',
@@ -107,35 +103,24 @@ class MagnitAPI:
 
             data = json.loads(match.group(1))
             page_props = data.get("props", {}).get("pageProps", {})
-            
-            # Ищем товар в структуре
             item = (
                 page_props.get("product") or
                 page_props.get("item") or
                 page_props.get("data", {}).get("product")
             )
-            
             if not item:
-                # Рекурсивный поиск
                 item = self._find_product_recursive(page_props)
-            
             if not item or not isinstance(item, dict):
                 return None
 
-            # Извлекаем цену
             price = self._extract_price(item)
-            
-            # Извлекаем название
             name = item.get("name", "")
             for sep in [' – ', ' - ', ' | ', '—']:
                 if sep in name:
                     name = name.split(sep)[0].strip()
                     break
 
-            # Извлекаем картинку
             image_url = self._get_image_url(item)
-
-            # Извлекаем количество
             quantity = item.get("quantity", 0)
             if isinstance(quantity, dict):
                 quantity = quantity.get("value", 0)
@@ -156,11 +141,9 @@ class MagnitAPI:
             return None
 
     def _parse_meta_tags(self, html: str, article: str, shop_code: str = None) -> Optional[Product]:
-        """Извлекает данные из meta-тегов"""
         try:
             title_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
             image_match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html)
-            
             if not title_match:
                 return None
 
@@ -171,8 +154,6 @@ class MagnitAPI:
                     break
 
             image_url = image_match.group(1) if image_match else ""
-
-            # Ищем цену в тексте
             price_match = re.search(r'(\d+[\s.,]\d+)\s*₽', html)
             price = 0
             if price_match:
@@ -196,8 +177,7 @@ class MagnitAPI:
             logger.debug(f"⚠️ Ошибка парсинга meta: {e}")
             return None
 
-    def _find_product_recursive(self, data, depth=0) -> Optional[dict]:
-        """Рекурсивно ищет объект товара"""
+    def _find_product_recursive(self, data, depth=0):
         if depth > 10:
             return None
         if isinstance(data, dict):
@@ -215,8 +195,6 @@ class MagnitAPI:
         return None
 
     def _extract_price(self, item: dict) -> float:
-        """Извлекает цену из объекта товара"""
-        # Прямое поле price
         price = item.get("price")
         if price:
             if isinstance(price, (int, float)):
@@ -228,7 +206,6 @@ class MagnitAPI:
                 except:
                     pass
 
-        # Поле prices
         prices = item.get("prices", {})
         if isinstance(prices, dict):
             for key in ["shopPrice", "currentPrice", "price", "regularPrice"]:
@@ -241,11 +218,9 @@ class MagnitAPI:
                         if val:
                             return val / 100 if val > 100000 else val
 
-        # Рекурсивный поиск
         return self._find_price_recursive(item)
 
     def _find_price_recursive(self, data, depth=0) -> float:
-        """Рекурсивно ищет цену"""
         if depth > 8:
             return 0
         if isinstance(data, dict):
@@ -266,7 +241,6 @@ class MagnitAPI:
         return 0
 
     def _get_image_url(self, item: dict) -> str:
-        """Извлекает URL картинки"""
         gallery = item.get("gallery", [])
         if gallery and isinstance(gallery, list) and len(gallery) > 0:
             first = gallery[0]
@@ -282,7 +256,6 @@ class MagnitAPI:
         return ""
 
     async def search_product_in_store(self, article: str, store_code: str) -> Optional[Product]:
-        """Поиск товара в конкретном магазине"""
         return await self.search_product(article, shop_code=store_code)
 
     def calculate_bounding_box(self, lat: float, lon: float, radius_km: float) -> dict:
@@ -294,7 +267,6 @@ class MagnitAPI:
         }
 
     async def get_stores_nearby(self, lat: float, lon: float, radius_km: float = 10) -> List[dict]:
-        """Получение списка магазинов рядом"""
         bbox = self.calculate_bounding_box(lat, lon, radius_km)
         payload = {
             "filters": {
@@ -309,7 +281,7 @@ class MagnitAPI:
         try:
             loop = asyncio.get_event_loop()
             resp = await loop.run_in_executor(
-                None, 
+                None,
                 lambda: self.scraper.post(self.STORES_URL, json=payload, headers=self.headers, timeout=15)
             )
             if resp.status_code != 200:
