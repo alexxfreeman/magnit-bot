@@ -436,7 +436,7 @@ async def callback_check_all_other(callback_query: CallbackQuery):
 
 async def main():
     await init_db()
-    await magnit_api.init_browser()  # Инициализируем браузер
+    await magnit_api.init_browser()  # ← Добавлено
     dp.message.middleware(LoggingMiddleware())
     dp.callback_query.middleware(LoggingMiddleware())
     dp.include_router(router)
