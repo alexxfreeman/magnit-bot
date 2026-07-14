@@ -16,8 +16,15 @@ from aiogram.types import (
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiohttp import ProxyConnector
 
+# Настраиваем сессию с прокси для обхода блокировки Telegram хостингом
+session = AiohttpSession(proxy="http://nbsYBT:v6pvCe@81.177.180.246:8000")
+
+bot = Bot(
+    token=BOT_TOKEN,
+    session=session,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 from config import BOT_TOKEN, ADMIN_ID
 from database import (
     init_db, add_to_history,
