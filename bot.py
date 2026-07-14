@@ -200,4 +200,41 @@ async def handle_article(message: Message):
     else: await message.answer(text, parse_mode="HTML")
     await add_to_history(user_id=message.from_user.id, article=article, title=product.name, price=f"{product.price:.2f}", in_stock=product.in_stock)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📊 Проверить во всех магазинах", callback_data="check_all")], [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")]])
-    await message
+    await message.answer("💡 Что хотите сделать дальше?", reply_markup=kb)
+
+@router.callback_query(F.data == "new_search")
+async def callback_new_search(cb: CallbackQuery):
+    await cb.message.answer("🔍 Отправьте артикул товара или ссылку:"); await cb.answer()
+
+@router.callback_query(F.data == "check_all")
+async def callback_check_all(cb: CallbackQuery, state: FSMContext):
+    user_id = cb.from_user.id
+    if user_id not in user_last_article: await cb.message.answer("❌ Сначала найдите товар."); await cb.answer(); return
+    await state.update_data(article=user_last_article[user_id])
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]], resize_keyboard=True)
+    await cb.message.answer("📍 Отправь геолокацию для проверки во всех магазинах:", reply_markup=kb)
+    await state.set_state(ScanStates.waiting_for_location); await cb.answer()
+
+async def main():
+    try:
+        logger.info("🚀 Запуск бота...")
+        await init_db()
+        logger.info("✅ База данных инициализирована")
+        await magnit_api.init_browser()
+        logger.info("✅ Браузер инициализирован")
+        dp.message.middleware(LoggingMiddleware())
+        dp.callback_query.middleware(LoggingMiddleware())
+        dp.include_router(router)
+        logger.info("🤖 Бот запущен!")
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}", exc_info=True)
+        raise
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот остановлен пользователем.")
+    except Exception as e:
+        logging.error(f"Фатальная ошибка: {e}", exc_info=True)
