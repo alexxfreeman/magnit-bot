@@ -13,10 +13,8 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiohttp import ProxyConnector
 
 from config import BOT_TOKEN, ADMIN_ID
 from database import (
@@ -29,18 +27,11 @@ from middlewares import LoggingMiddleware
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === НАСТРОЙКА ПРОКСИ ДЛЯ TELEGRAM ===
-# Мы используем прокси только для связи с Telegram, чтобы обойти блокировку хостинга
-proxy_url = "http://nbsYBT:v6pvCe@81.177.180.246:8000"
-connector = ProxyConnector.from_url(proxy_url)
-session = AiohttpSession(connector=connector)
-
+# Чистая инициализация бота без прокси
 bot = Bot(
     token=BOT_TOKEN,
-    session=session,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
-# =======================================
 
 dp = Dispatcher()
 router = Router()
@@ -70,13 +61,13 @@ def extract_article_from_text(text: str) -> Tuple[Optional[str], Optional[str], 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer("👋 <b>Привет! Я бот для проверки товаров в Магните.</b>\n\nОтправь мне <b>артикул товара</b> или <b>ссылку</b> из приложения Магнит, и я проверю наличие и цену.\n\nПримеры:\n• Артикул: <code>1199991965</code>\n• Ссылка из приложения Магнит", parse_mode="HTML")
+    await message.answer("👋 <b>Привет! Я бот для проверки товаров в Магните.</b>\n\nОтправь мне <b>артикул товара</b> или <b>ссылку</b> из приложения Магнит, и я проверю наличие и цену.\n\nПримеры:\n• Артикул: <code>1199991965</code>\n• Ссылка из приложения Магнит")
 
 @router.message(Command("check_all"))
 async def cmd_check_all(message: Message, state: FSMContext):
     user_id = message.from_user.id
     if user_id not in user_last_article:
-        await message.answer("❌ Сначала отправь мне артикул товара.", parse_mode="HTML")
+        await message.answer("❌ Сначала отправь мне артикул товара.")
         return
     await state.update_data(article=user_last_article[user_id])
     kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]], resize_keyboard=True)
@@ -94,7 +85,7 @@ async def cmd_stats(message: Message):
     stats = await get_user_stats()
     text = f"📊 <b>Статистика бота</b>\n\n👥 Всего: <b>{stats['total_users']}</b>\n🟢 За 24ч: <b>{stats['active_24h']}</b>\n🔍 Поисков: <b>{stats['total_searches']}</b>\n\n<b>🏆 Топ-10:</b>\n"
     for i, u in enumerate(stats['top_users'], 1): text += f"{i}. @{u['username'] or u['first_name']} — {u['searches']}\n"
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text)
 
 @router.message(Command("logs"))
 async def cmd_logs(message: Message):
@@ -103,25 +94,25 @@ async def cmd_logs(message: Message):
     if not logs: await message.answer("📭 Логов пока нет."); return
     text = "📋 <b>Последние действия:</b>\n\n"
     for l in logs[:15]: text += f"[{l['timestamp'][:16]}] {l['action']} @{l['username'] or l['first_name']} (ID:{l['user_id']})\n"
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text)
 
 @router.message(Command("user"))
 async def cmd_user(message: Message):
     if message.from_user.id != ADMIN_ID: return
     try: uid = int(message.text.split()[1])
-    except: await message.answer("❌ /user ID", parse_mode="HTML"); return
+    except: await message.answer("❌ /user ID"); return
     data = await get_user_details(uid)
     if not data: await message.answer(f"❌ Пользователь {uid} не найден."); return
     u = data['user']
     txt = f"👤 <b>{u['first_name']} {u['last_name'] or ''}</b>\n🆔 {uid}\n🔖 @{u['username'] or 'нет'}\n📅 С {u['created_at'][:10]}\n🕐 Был {u['last_seen'][:10] if u['last_seen'] else 'никогда'}\n\n"
     if data['history']: txt += "<b>Последние поиски:</b>\n" + "\n".join(f"• {h['article']} — {h['title'][:25]} ({h['price']}₽)" for h in data['history'][:5])
-    await message.answer(txt, parse_mode="HTML")
+    await message.answer(txt)
 
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     if message.from_user.id != ADMIN_ID: return
     txt = message.text.replace('/broadcast', '', 1).strip()
-    if not txt: await message.answer("❌ /broadcast ТЕКСТ", parse_mode="HTML"); return
+    if not txt: await message.answer("❌ /broadcast ТЕКСТ"); return
     await message.answer("📨 Начинаю рассылку...")
     users = await get_all_users()
     s = f = 0
@@ -168,7 +159,7 @@ async def process_location(message: Message, state: FSMContext):
     for i, r in enumerate(top_10, 1):
         if r["in_stock"]: text += f"{i}. 🏪 <b>{r['store_name']}</b>\n   💰 Цена: <b>{r['price']:.2f} ₽</b>\n   📦 В наличии: {r['quantity']} шт.\n   📍 {r['store_address']}\n   📏 Расстояние: {r['distance']:.1f} км\n   🔗 <a href='{r['url']}'>Открыть в Магните</a>\n\n"
         else: text += f"{i}. ❌ <b>{r['store_name']}</b> - нет в наличии\n   📏 {r['distance']:.1f} км\n\n"
-    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.answer(text, disable_web_page_preview=True)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")]])
     await message.answer("💡 Что хотите сделать дальше?", reply_markup=kb)
 
@@ -182,7 +173,7 @@ async def handle_article(message: Message):
     raw_text = message.text.strip()
     article, shop_code, _ = extract_article_from_text(raw_text)
     if not article:
-        await message.answer("❌ Не удалось найти артикул. Отправьте:\n• Артикул: <code>1199991965</code>\n• Или ссылку из приложения Магнит", parse_mode="HTML")
+        await message.answer("❌ Не удалось найти артикул. Отправьте:\n• Артикул: <code>1199991965</code>\n• Или ссылку из приложения Магнит")
         return
     user_last_article[message.from_user.id] = article
     info = f"🔍 Ищу товар {article}"
@@ -190,14 +181,14 @@ async def handle_article(message: Message):
     await message.answer(info + "...")
     product = await magnit_api.search_product(article, shop_code=shop_code)
     if not product:
-        await message.answer(f"❌ Товар с артикулом <code>{article}</code> не найден.", parse_mode="HTML")
+        await message.answer(f"❌ Товар с артикулом <code>{article}</code> не найден.")
         return
     stock = "✅ В наличии" if product.in_stock else "❌ Нет в наличии"
     text = f"📦 <b>{product.name}</b>\n\n💰 <b>Цена:</b> {product.price:.2f} ₽\n📊 <b>Статус:</b> {stock}\n📦 <b>Количество:</b> {product.quantity} шт.\n⭐ <b>Рейтинг:</b> {product.rating}/5\n\n🔗 <a href='{product.url}'>Открыть в Магните</a>"
     if product.image_url and product.image_url.startswith(('http://', 'https://')):
-        try: await message.answer_photo(photo=product.image_url, caption=text, parse_mode="HTML")
-        except: await message.answer(text, parse_mode="HTML")
-    else: await message.answer(text, parse_mode="HTML")
+        try: await message.answer_photo(photo=product.image_url, caption=text)
+        except: await message.answer(text)
+    else: await message.answer(text)
     await add_to_history(user_id=message.from_user.id, article=article, title=product.name, price=f"{product.price:.2f}", in_stock=product.in_stock)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📊 Проверить во всех магазинах", callback_data="check_all")], [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")]])
     await message.answer("💡 Что хотите сделать дальше?", reply_markup=kb)
