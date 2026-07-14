@@ -5,3 +5,4 @@ cloudscraper==1.2.71
 geopy==2.4.1
 playwright==1.48.0
 python-dotenv==1.0.1
+aiohttp-socks
