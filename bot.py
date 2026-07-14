@@ -17,15 +17,9 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-# Настраиваем сессию с прокси для обхода блокировки Telegram хостингом
-session = AiohttpSession(proxy="http://nbsYBT:v6pvCe@81.177.180.246:8000")
-
-bot = Bot(
-    token=BOT_TOKEN,
-    session=session,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+# ВАЖНО: Эта строка загружает токен и ID из файла config.py
 from config import BOT_TOKEN, ADMIN_ID
+
 from database import (
     init_db, add_to_history,
     get_user_stats, get_recent_logs, get_user_details, get_all_users
@@ -36,18 +30,14 @@ from middlewares import LoggingMiddleware
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === НАСТРОЙКА ПРОКСИ ДЛЯ TELEGRAM ===
-# Мы используем прокси только для связи с Telegram, чтобы обойти блокировку хостинга
-proxy_url = "http://nbsYBT:v6pvCe@81.177.180.246:8000"
-connector = ProxyConnector.from_url(proxy_url)
-session = AiohttpSession(connector=connector)
+# Настраиваем сессию с прокси для обхода блокировки Telegram хостингом
+session = AiohttpSession(proxy="http://nbsYBT:v6pvCe@81.177.180.246:8000")
 
 bot = Bot(
     token=BOT_TOKEN,
     session=session,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
-# =======================================
 
 dp = Dispatcher()
 router = Router()
